@@ -436,7 +436,10 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
             return None
 
         sample_id = f"smp_{uuid.uuid4().hex[:6]}"
-        self._candidate_samples[sample_id] = list(features)
+        self._candidate_samples[sample_id] = {
+            "features": list(features),
+            "label": target_sign
+        }
 
         record = SampleRecord(
             id=sample_id,
@@ -444,7 +447,7 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
             timestamp=time.time(),
             landmarks_count=len(features),
             is_accepted=False,
-            metadata={"features": features}
+            metadata={"features": list(features)}
         )
         self.sample_collected.emit(record)
         return record
@@ -454,7 +457,14 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
         if sample_id not in self._candidate_samples:
             return False
 
-        features = self._candidate_samples.pop(sample_id)
+        item = self._candidate_samples.pop(sample_id)
+        if isinstance(item, dict):
+            features = item["features"]
+            label = item.get("label", self._current_sign)
+        else:
+            features = item
+            label = self._current_sign
+
         csv_path = Path(self.dataset_path)
 
         # Ensure header if new file
@@ -467,10 +477,10 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
                 writer = csv.writer(f)
                 if needs_header:
                     writer.writerow(header)
-                writer.writerow([self._current_sign] + features)
+                writer.writerow([label] + features)
 
-            self._sample_counts[self._current_sign] = self._sample_counts.get(self._current_sign, 0) + 1
-            self.count_updated.emit(self._sample_counts[self._current_sign])
+            self._sample_counts[label] = self._sample_counts.get(label, 0) + 1
+            self.count_updated.emit(self._sample_counts[label])
             return True
         except Exception as e:
             self.error_occurred.emit(f"Failed to save sample: {e}")
