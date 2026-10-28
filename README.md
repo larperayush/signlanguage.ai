@@ -1,4 +1,4 @@
-# SignFlow Studio — Computer Vision ASL Recognition & Neural Network Laboratory
+# SignFlow Studio — Computer Vision ASL Recognition & Neural Network Laboratory (already in development)
 
 <p align="center">
   <img src="app/resources/app_icon.png" alt="SignFlow Studio Logo" width="128" height="128" />
