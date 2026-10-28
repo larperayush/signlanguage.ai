@@ -319,7 +319,7 @@ Run any test suite directly from your terminal:
 * **Ayush Pandey** — System Architecture, UI/UX Engineering, 3D WebGL Visualization & ML Core Integration
 * **Rajat** — Computer Vision Pipeline, Dataset Curation & ASL Gesture Modeling
 
-*Class XI, Yojshakti Model School*  
+*Class XI, Yuvashakti Model School*  
 *Specialization: Computer Science & Artificial Intelligence*
 
 ---
