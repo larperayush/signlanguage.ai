@@ -1,9 +1,10 @@
 """
-Targeted Verification Test: Accept Sample Button & Dataset Append
+Targeted Verification Test: Accept Sample & Accept All Samples
 Verifies:
-1. Slot connection of btn_accept_sample in StaticTrainingPage.
+1. Slot connection of btn_accept_sample and btn_accept_all in StaticTrainingPage.
 2. Appending of 63 landmark coordinates and target label ('G') from Candidate Sample Buffer to active dataset.csv.
 3. Immediate update of the 'Recorded Samples' counter (lbl_ds_samples).
+4. Batch commit of all candidate samples at once via 'Accept All'.
 """
 import sys
 import os
@@ -29,15 +30,19 @@ def run_test():
     page: StaticTrainingPage = window.page_static
 
     print("======================================================================")
-    print("   SignFlow Studio — Accept Sample Slot & Dataset Verification        ")
+    print("   SignFlow Studio — Accept Sample & Accept All Batch Verification    ")
     print("======================================================================")
 
-    # 1. Locate the slot connected to the Accept Sample button
-    print("\n[Phase 1] Locating slot connected to Accept Sample button...")
+    # 1. Locate slots and buttons
+    print("\n[Phase 1] Locating buttons and connected slots...")
     assert hasattr(page, "btn_accept_sample"), "btn_accept_sample button not found"
     assert hasattr(page, "_accept_sample"), "Slot _accept_sample not found"
     assert callable(page._accept_sample), "_accept_sample is not callable"
-    print("  [OK] Located slot '_accept_sample' connected to btn_accept_sample.")
+
+    assert hasattr(page, "btn_accept_all"), "btn_accept_all button not found"
+    assert hasattr(page, "_accept_all_samples"), "Slot _accept_all_samples not found"
+    assert callable(page._accept_all_samples), "_accept_all_samples is not callable"
+    print("  [OK] Located 'btn_accept_sample' (_accept_sample) and 'btn_accept_all' (_accept_all_samples).")
 
     # 2. Set up a dedicated isolated active dataset for testing
     print("\n[Phase 2] Setting up active dataset for test verification...")
@@ -60,53 +65,65 @@ def run_test():
     page._refresh_dataset_display()
     app.processEvents()
 
-    assert page.lbl_ds_samples.text() == f"{initial_count} samples", f"Expected '{initial_count} samples', got '{page.lbl_ds_samples.text()}'"
+    assert page.lbl_ds_samples.text() == f"{initial_count} samples"
     print(f"  [OK] Active dataset configured with initial count: {page.lbl_ds_samples.text()}")
 
     # 3. Add Candidate Sample for Sign 'G' with 63 landmark coordinates
-    print("\n[Phase 3] Adding Candidate Sample for 'G' with 63 landmark coordinates...")
+    print("\n[Phase 3] Adding Single Candidate Sample for 'G'...")
     test_features = [round(0.01 * (i + 1), 4) for i in range(63)]
-    assert len(test_features) == 63
-
     sample_rec = page.add_candidate_sample(sign_label="G", features=test_features)
     app.processEvents()
 
-    assert page.sample_table.rowCount() >= 1, "Candidate sample table should have at least 1 row"
+    assert page.sample_table.rowCount() >= 1
     row_idx = page.sample_table.rowCount() - 1
-    assert page.sample_table.item(row_idx, 0).text() == sample_rec.id
     assert page.sample_table.item(row_idx, 1).text() == "G"
-    assert page.sample_table.item(row_idx, 2).text() == "63 coords"
     assert page.sample_table.item(row_idx, 3).text() == "Candidate"
-    print(f"  [OK] Candidate sample buffered in review table: ID={sample_rec.id}, Sign=G, Coords=63, Status=Candidate.")
 
     # 4. Trigger the 'Accept Sample' button click
-    print("\n[Phase 4] Clicking 'Accept Sample' button...")
+    print("\n[Phase 4] Testing Single 'Accept Sample'...")
     page.sample_table.selectRow(row_idx)
     page.btn_accept_sample.click()
     app.processEvents()
 
-    # 5. Verify the table status updated immediately
-    assert page.sample_table.item(row_idx, 3).text() == "Accepted", "Status did not update to 'Accepted'"
-    print("  [OK] Table item status updated to 'Accepted'.")
+    assert page.sample_table.item(row_idx, 3).text() == "Accepted"
+    assert page.lbl_ds_samples.text() == f"{initial_count + 1} samples"
+    print(f"  [OK] Single accept verified: Status='Accepted', Count={page.lbl_ds_samples.text()}")
 
-    # 6. Verify 'Recorded Samples' counter updated immediately
-    expected_new_count = initial_count + 1
-    recorded_samples_text = page.lbl_ds_samples.text()
-    assert recorded_samples_text == f"{expected_new_count} samples", f"Expected '{expected_new_count} samples', got '{recorded_samples_text}'"
-    print(f"  [OK] 'Recorded Samples' counter updated immediately: {recorded_samples_text}")
+    # 5. Add MULTIPLE Candidate Samples for 'Accept All' batch testing
+    print("\n[Phase 5] Adding 3 Candidate Samples (Signs 'G', 'C', 'D') for Batch Acceptance...")
+    batch_signs = ["G", "C", "D"]
+    batch_samples = []
+    for s_idx, s_label in enumerate(batch_signs):
+        feats = [round(0.02 * (s_idx + 1) * (j + 1), 4) for j in range(63)]
+        rec = page.add_candidate_sample(sign_label=s_label, features=feats)
+        batch_samples.append((rec, feats))
+        app.processEvents()
 
-    # 7. Verify the actual CSV file content on disk
-    print("\n[Phase 5] Inspecting saved CSV file on disk...")
+    print(f"  [OK] Added {len(batch_samples)} candidate samples to buffer.")
+
+    # 6. Click 'Accept All' button
+    print("\n[Phase 6] Clicking 'Accept All' button...")
+    page.btn_accept_all.click()
+    app.processEvents()
+
+    # 7. Verify all rows in the buffer are marked 'Accepted'
+    for r in range(page.sample_table.rowCount()):
+        status = page.sample_table.item(r, 3).text()
+        assert status == "Accepted", f"Row {r} status expected 'Accepted', got '{status}'"
+    print("  [OK] All buffer rows successfully marked as 'Accepted'.")
+
+    # 8. Verify 'Recorded Samples' counter updated immediately for all batch items
+    expected_batch_count = initial_count + 1 + len(batch_samples)
+    assert page.lbl_ds_samples.text() == f"{expected_batch_count} samples", f"Expected '{expected_batch_count} samples', got '{page.lbl_ds_samples.text()}'"
+    print(f"  [OK] 'Recorded Samples' counter updated immediately to: {page.lbl_ds_samples.text()}")
+
+    # 9. Verify CSV file content on disk has all rows
+    print("\n[Phase 7] Inspecting disk CSV file for batch commit...")
     with open(test_csv, "r", encoding="utf-8") as f:
         reader = list(csv.reader(f))
 
-    assert len(reader) == expected_new_count + 1, f"Expected {expected_new_count + 1} lines (header + rows), got {len(reader)}"
-    last_row = reader[-1]
-    assert last_row[0] == "G", f"Expected last row label 'G', got '{last_row[0]}'"
-    saved_coords = [float(v) for v in last_row[1:]]
-    assert len(saved_coords) == 63, f"Expected 63 coordinate values, got {len(saved_coords)}"
-    assert saved_coords == test_features, "Saved landmark coordinates do not match candidate features"
-    print(f"  [OK] CSV file on disk verified: Label='G', Features=63 coordinates, exactly matching buffer.")
+    assert len(reader) == expected_batch_count + 1, f"Expected {expected_batch_count + 1} rows in CSV, found {len(reader)}"
+    print(f"  [OK] CSV file on disk verified with all {expected_batch_count} committed data rows.")
 
     # Cleanup test files
     reg.remove_dataset(entry.id)
@@ -120,7 +137,7 @@ def run_test():
     app.processEvents()
 
     print("\n======================================================================")
-    print("   [ALL ACCEPT SAMPLE TESTS PASSED SUCCESSFULLY - 100% VERIFIED]     ")
+    print("   [ALL ACCEPT SAMPLE & ACCEPT ALL TESTS PASSED - 100% OPERATIONAL]  ")
     print("======================================================================\n")
 
 

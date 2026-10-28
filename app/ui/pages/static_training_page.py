@@ -313,6 +313,12 @@ class StaticTrainingPage(QWidget):
         review_actions = QHBoxLayout()
         review_actions.setSpacing(10)
 
+        self.btn_accept_all = QPushButton(" Accept All")
+        self.btn_accept_all.setProperty("class", "primaryBtn")
+        self.btn_accept_all.setIcon(get_icon("check", "#FFFFFF", size=13))
+        self.btn_accept_all.setToolTip("Commit all candidate samples in buffer to the active dataset at once")
+        self.btn_accept_all.clicked.connect(self._accept_all_samples)
+
         self.btn_accept_sample = QPushButton(" Accept Sample")
         self.btn_accept_sample.setProperty("class", "secondaryBtn")
         self.btn_accept_sample.setIcon(get_icon("check", palette.success, size=13))
@@ -323,8 +329,17 @@ class StaticTrainingPage(QWidget):
         self.btn_discard_sample.setIcon(get_icon("trash", palette.danger, size=13))
         self.btn_discard_sample.clicked.connect(self._discard_sample)
 
+        self.btn_discard_all = QPushButton(" Clear Buffer")
+        self.btn_discard_all.setProperty("class", "secondaryBtn")
+        self.btn_discard_all.setIcon(get_icon("trash", palette.text_muted, size=13))
+        self.btn_discard_all.setToolTip("Clear all candidate samples from review buffer")
+        self.btn_discard_all.clicked.connect(self._discard_all_samples)
+
+        review_actions.addWidget(self.btn_accept_all)
+
         review_actions.addWidget(self.btn_accept_sample)
         review_actions.addWidget(self.btn_discard_sample)
+        review_actions.addWidget(self.btn_discard_all)
         review_actions.addStretch()
         collect_layout.addLayout(review_actions)
 
@@ -899,6 +914,158 @@ class StaticTrainingPage(QWidget):
                 pass
             self._dataset_registry.dataset_updated.emit(active_ds)
             self._dataset_registry.active_static_changed.emit(active_ds)
+
+    def _accept_all_samples(self):
+        """
+        Slot connected to the 'Accept All' button.
+        Appends all unaccepted candidate samples currently in the Candidate Sample Buffer
+        to the active dataset CSV file in a single batch operation, updates all row
+        statuses to Accepted, and immediately refreshes the 'Recorded Samples' counter.
+        """
+        candidate_rows = []
+        for r in range(self.sample_table.rowCount()):
+            status_item = self.sample_table.item(r, 3)
+            if status_item and status_item.text() != "Accepted":
+                candidate_rows.append(r)
+
+        if not candidate_rows:
+            QMessageBox.information(
+                self,
+                "Buffer Empty",
+                "No unaccepted candidate samples currently in review buffer."
+            )
+            return
+
+        # Resolve active dataset file path
+        active_ds = self._dataset_registry.get_active_static_dataset()
+        if active_ds and active_ds.file_path:
+            csv_path = Path(active_ds.file_path)
+        elif hasattr(self._collection_backend, "dataset_path") and self._collection_backend.dataset_path:
+            csv_path = Path(self._collection_backend.dataset_path)
+        else:
+            csv_path = STATIC_SIGNS_CSV
+
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
+        needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
+        header = ["label"] + [f"feature_{i}" for i in range(63)]
+
+        rows_to_append = []
+        accepted_records = []
+
+        for r in candidate_rows:
+            sample_id = self.sample_table.item(r, 0).text()
+            sign_label = self.sample_table.item(r, 1).text().strip().upper()
+
+            features = None
+            if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
+                rec = self._candidate_buffer[sample_id]
+                if rec.metadata and "features" in rec.metadata:
+                    features = rec.metadata["features"]
+                if rec.sign_label:
+                    sign_label = rec.sign_label.strip().upper()
+
+            if features is None:
+                id_item = self.sample_table.item(r, 0)
+                if id_item:
+                    stored = id_item.data(Qt.ItemDataRole.UserRole)
+                    if isinstance(stored, SampleRecord) and stored.metadata:
+                        features = stored.metadata.get("features")
+                    elif isinstance(stored, dict) and "features" in stored:
+                        features = stored["features"]
+
+            if features is None and hasattr(self._collection_backend, "_candidate_samples"):
+                backend_item = self._collection_backend._candidate_samples.get(sample_id)
+                if isinstance(backend_item, dict):
+                    features = backend_item.get("features")
+                    sign_label = backend_item.get("label", sign_label)
+                elif isinstance(backend_item, list):
+                    features = backend_item
+
+            if features and len(features) == 63:
+                rows_to_append.append([sign_label] + list(features))
+                accepted_records.append((r, sample_id, sign_label))
+
+        if not rows_to_append:
+            QMessageBox.warning(
+                self,
+                "Accept Failed",
+                "None of the candidate samples had valid 63-dimensional coordinate vectors."
+            )
+            return
+
+        # Batch write to active dataset CSV
+        try:
+            with open(csv_path, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if needs_header:
+                    writer.writerow(header)
+                writer.writerows(rows_to_append)
+        except Exception as e:
+            QMessageBox.critical(self, "Error Saving Samples", f"Failed to batch commit samples: {e}")
+            return
+
+        # Mark each row in table and local buffer as Accepted
+        for r, sample_id, sign_label in accepted_records:
+            status_item = QTableWidgetItem("Accepted")
+            status_item.setForeground(QColor("#10B981"))
+            self.sample_table.setItem(r, 3, status_item)
+
+            if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
+                self._candidate_buffer[sample_id].is_accepted = True
+
+            if hasattr(self._collection_backend, "_candidate_samples") and sample_id in self._collection_backend._candidate_samples:
+                del self._collection_backend._candidate_samples[sample_id]
+
+            if hasattr(self._collection_backend, "_sample_counts"):
+                self._collection_backend._sample_counts[sign_label] = self._collection_backend._sample_counts.get(sign_label, 0) + 1
+
+        if hasattr(self._collection_backend, "_sample_counts"):
+            curr = getattr(self._collection_backend, "_current_sign", "A")
+            self._collection_backend.count_updated.emit(self._collection_backend._sample_counts.get(curr, 0))
+
+        # Immediately update the 'Recorded Samples' counter
+        total_samples = 0
+        if csv_path.exists():
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    total_samples = max(0, sum(1 for _ in f) - 1)
+            except Exception:
+                total_samples = 0
+
+        self.lbl_ds_samples.setText(f"{total_samples} samples")
+
+        # Update active dataset entry in DatasetRegistry
+        if active_ds:
+            active_ds.row_count = total_samples
+            try:
+                active_ds.file_size_bytes = csv_path.stat().st_size
+            except Exception:
+                pass
+            self._dataset_registry.dataset_updated.emit(active_ds)
+            self._dataset_registry.active_static_changed.emit(active_ds)
+
+        # Visual feedback on UI
+        msg_text = f"Accepted all {len(rows_to_append)} samples into dataset."
+        self.video_widget.set_last_capture_info(f"Accepted {len(rows_to_append)} samples")
+        self.lbl_last_capture.setText(msg_text)
+
+    def _discard_all_samples(self):
+        """Discard all candidate samples from the review buffer."""
+        count = self.sample_table.rowCount()
+        if count == 0:
+            return
+
+        for r in range(count):
+            item = self.sample_table.item(r, 0)
+            if item:
+                sample_id = item.text()
+                self._collection_backend.discard_sample(sample_id)
+
+        if hasattr(self, "_candidate_buffer"):
+            self._candidate_buffer.clear()
+
+        self.sample_table.setRowCount(0)
+        self.lbl_last_capture.setText(f"Cleared {count} samples from review buffer.")
 
     def _discard_sample(self):
         row = self.sample_table.currentRow()
