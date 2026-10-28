@@ -1,0 +1,70 @@
+# ==============================================================================
+# SignFlow Studio — Git Ignore Configuration
+# Protects security, credentials, build artifacts, and system environments.
+# ==============================================================================
+
+# Python Virtual Environments (Machine-Specific)
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyd
+
+# C extensions
+*.so
+
+# Environment Variables, Secrets & Configuration Files
+.env
+.env.*
+*.env
+secrets.json
+credentials.json
+*.pem
+*.key
+
+# PyInstaller / Build Artifacts & Distributions
+build/
+dist/
+*.spec.bak
+*.egg-info/
+.eggs/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+*.egg
+
+# IDE, Editor, and OS Files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+*.tmp
+
+# Logs and databases
+*.log
+*.sqlite
+*.sqlite3
+
+# Test artifacts and temporary test data
+data/
+test_renders/
+
+# Tooling and CLI Cache
+.gemini/
+scratch/

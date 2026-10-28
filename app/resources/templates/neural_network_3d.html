@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Neural Network 3D Laboratory</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        body, html {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #090C12;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: #F8FAFC;
+        }
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            cursor: grab;
+        }
+        #canvas-container:active {
+            cursor: grabbing;
+        }
+        /* Floating Tooltip */
+        #tooltip {
+            position: absolute;
+            display: none;
+            pointer-events: none;
+            background: rgba(15, 23, 42, 0.92);
+            border: 1px solid #334155;
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6), 0 0 15px rgba(56, 189, 248, 0.15);
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 11px;
+            color: #E2E8F0;
+            backdrop-filter: blur(8px);
+            z-index: 100;
+            transition: opacity 0.12s ease;
+            max-width: 240px;
+        }
+        #tooltip .tt-title {
+            font-weight: 700;
+            font-size: 12px;
+            color: #38BDF8;
+            margin-bottom: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #tooltip .tt-badge {
+            background: rgba(56, 189, 248, 0.18);
+            color: #38BDF8;
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+        }
+        #tooltip .tt-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 3px 0;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        }
+        #tooltip .tt-label {
+            color: #94A3B8;
+        }
+        #tooltip .tt-val {
+            font-weight: 600;
+            color: #F1F5F9;
+        }
+
+        /* Viewport HUD Overlays */
+        #hud-top {
+            position: absolute;
+            top: 14px;
+            left: 16px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            z-index: 20;
+            pointer-events: none;
+        }
+        .hud-badge {
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(51, 65, 85, 0.8);
+            border-radius: 6px;
+            padding: 5px 10px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #94A3B8;
+            letter-spacing: 0.2px;
+            backdrop-filter: blur(6px);
+        }
+        .hud-badge span {
+            color: #38BDF8;
+            font-family: monospace;
+        }
+
+        /* 3D Viewport Controls */
+        #viewport-controls {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            z-index: 20;
+        }
+        .vp-btn {
+            background: rgba(15, 23, 42, 0.88);
+            border: 1px solid #334155;
+            border-radius: 6px;
+            width: 32px;
+            height: 32px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #94A3B8;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            backdrop-filter: blur(6px);
+        }
+        .vp-btn:hover {
+            background: #1E293B;
+            border-color: #38BDF8;
+            color: #F8FAFC;
+        }
+
+        /* Layer Labels Overlay in 3D */
+        #layer-labels-container {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            overflow: hidden;
+            z-index: 10;
+        }
+        .layer-floating-label {
+            position: absolute;
+            transform: translate(-50%, -100%);
+            background: rgba(15, 23, 42, 0.85);
+            border: 1px solid rgba(56, 189, 248, 0.3);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: #38BDF8;
+            text-transform: uppercase;
+            white-space: nowrap;
+            transition: border-color 0.2s, background 0.2s;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        .layer-floating-label:hover {
+            border-color: #38BDF8;
+            background: rgba(56, 189, 248, 0.2);
+        }
+        .layer-floating-label.selected {
+            border-color: #A855F7;
+            color: #A855F7;
+            background: rgba(168, 85, 247, 0.2);
+        }
+        .layer-floating-label .sub {
+            display: block;
+            font-size: 9px;
+            color: #94A3B8;
+            font-family: monospace;
+            font-weight: 400;
+        }
+    </style>
+</head>
+<body>
+    <div id="canvas-container"></div>
+    <div id="layer-labels-container"></div>
+
+    <div id="hud-top">
+        <div class="hud-badge" id="hud-model">MODEL: <span id="lbl-model-name">None</span></div>
+        <div class="hud-badge" id="hud-status">STATUS: <span id="lbl-inference-status">Ready</span></div>
+    </div>
+
+    <div id="viewport-controls">
+        <div class="vp-btn" id="btn-fit" title="Fit Network in View">⛶</div>
+        <div class="vp-btn" id="btn-reset" title="Reset Camera">↺</div>
+        <div class="vp-btn" id="btn-zoom-in" title="Zoom In">+</div>
+        <div class="vp-btn" id="btn-zoom-out" title="Zoom Out">−</div>
+    </div>
+
+    <div id="tooltip">
+        <div class="tt-title">
+            <span id="tt-neuron-id">L1 : N0</span>
+            <span class="tt-badge" id="tt-layer-type">Dense</span>
+        </div>
+        <div class="tt-row">
+            <span class="tt-label">Activation:</span>
+            <span class="tt-val" id="tt-activation">0.0000</span>
+        </div>
+        <div class="tt-row">
+            <span class="tt-label">Bias (b):</span>
+            <span class="tt-val" id="tt-bias">0.0000</span>
+        </div>
+        <div class="tt-row" id="tt-class-row" style="display: none;">
+            <span class="tt-label">Class:</span>
+            <span class="tt-val" id="tt-class" style="color: #10B981;">A</span>
+        </div>
+    </div>
+
+    <!-- Local Offline Three.js & Controls -->
+    <script src="../js/three.min.js"></script>
+    <script src="../js/OrbitControls.js"></script>
+
+    <script>
+        // Global Bridge Events Queue for Qt Synchronization
+        window.bridgeEvents = [];
+        function emitBridgeEvent(name, data) {
+            window.bridgeEvents.push({ event: name, data: data, timestamp: Date.now() });
+        }
+        window.popBridgeEvents = function() {
+            var evs = window.bridgeEvents;
+            window.bridgeEvents = [];
+            return evs;
+        };
+
+        // Visualizer State
+        var scene, camera, renderer, controls;
+        var modelData = null;
+        var layerNodes = [];       // Array of arrays: layerNodes[layerIdx][neuronIdx] = Mesh
+        var layerPositions = [];   // Array of Vector3 positions for each neuron
+        var connectionMeshes = []; // LineSegments connecting adjacent layers
+        var signalParticles = null;// Three.Points for forward pass pulse animation
+        var layerLabelElements = [];
+        var selectedLayerIndex = null;
+        var selectedNeuron = null; // { layer: int, index: int }
+        var hoveredNeuron = null;
+        var currentActivations = null;
+        var isAnimating = false;
+        var animStep = 0;
+        var animProgress = 0;
+        var animSpeed = 1.0;
+        var isPaused = false;
+        var isPageActive = true;
+        var isLoopRunning = false;
+        var animFrameId = null;
+        var userInteracting = false;
+        var dampingFrames = 0;
+
+        var raycaster = new THREE.Raycaster();
+        var mouse = new THREE.Vector2(-1000, -1000);
+        var container = document.getElementById('canvas-container');
+        var tooltip = document.getElementById('tooltip');
+        var labelsContainer = document.getElementById('layer-labels-container');
+
+        // Color Palette (Linear Dark Aesthetic)
+        var COLOR_BG = 0x090C12;
+        var COLOR_NEURON_INACTIVE = 0x2A3447;
+        var COLOR_NEURON_ACTIVE = 0x38BDF8;
+        var COLOR_NEURON_SELECTED = 0xA855F7;
+        var COLOR_NEURON_OUTPUT_WIN = 0x10B981;
+        var COLOR_EDGE_POS = new THREE.Color(0x38BDF8);
+        var COLOR_EDGE_NEG = new THREE.Color(0x818CF8);
+        var COLOR_EDGE_MUTED = new THREE.Color(0x1E293B);
+
+        // Initialize 3D Engine
+        function initScene() {
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(COLOR_BG);
+            scene.fog = new THREE.FogExp2(COLOR_BG, 0.0009);
+
+            var width = container.clientWidth || window.innerWidth;
+            var height = container.clientHeight || window.innerHeight;
+
+            camera = new THREE.PerspectiveCamera(45, width / height, 1, 3000);
+            camera.position.set(0, 80, 680);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
+            renderer.setSize(width, height);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.15;
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.07;
+            controls.maxDistance = 1600;
+            controls.minDistance = 80;
+            controls.target.set(0, 0, 0);
+
+            controls.addEventListener('start', function() {
+                userInteracting = true;
+                startAnimationLoop();
+            });
+            controls.addEventListener('change', function() {
+                if (!isLoopRunning && isPageActive) {
+                    renderOnce();
+                }
+            });
+            controls.addEventListener('end', function() {
+                userInteracting = false;
+                dampingFrames = 25;
+                startAnimationLoop();
+            });
+
+            // Lighting setup: Soft ambient + Dual point highlights
+            var ambient = new THREE.AmbientLight(0x475569, 0.85);
+            scene.add(ambient);
+
+            var keyLight = new THREE.DirectionalLight(0x94A3B8, 0.9);
+            keyLight.position.set(150, 300, 400);
+            scene.add(keyLight);
+
+            var cyanLight = new THREE.PointLight(0x38BDF8, 1.2, 800);
+            cyanLight.position.set(-200, 150, 150);
+            scene.add(cyanLight);
+
+            var violetLight = new THREE.PointLight(0xA855F7, 1.0, 800);
+            violetLight.position.set(200, -100, 150);
+            scene.add(violetLight);
+
+            // Horizon Grid Plane
+            var grid = new THREE.GridHelper(1200, 24, 0x1E293B, 0x0F172A);
+            grid.position.y = -180;
+            scene.add(grid);
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize, false);
+            container.addEventListener('mousemove', onMouseMove, false);
+            container.addEventListener('click', onClick, false);
+
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden) {
+                    stopAnimationLoop();
+                } else if (isPageActive && (isAnimating || userInteracting || dampingFrames > 0)) {
+                    startAnimationLoop();
+                } else if (isPageActive) {
+                    renderOnce();
+                }
+            });
+
+            document.getElementById('btn-reset').addEventListener('click', resetCamera);
+            document.getElementById('btn-fit').addEventListener('click', fitNetwork);
+            document.getElementById('btn-zoom-in').addEventListener('click', function() { zoomCamera(0.8); });
+            document.getElementById('btn-zoom-out').addEventListener('click', function() { zoomCamera(1.25); });
+
+            emitBridgeEvent('scene_ready', { status: 'initialized' });
+            renderOnce();
+        }
+
+        function onWindowResize() {
+            if (!container || !renderer || !camera) return;
+            var width = container.clientWidth || window.innerWidth;
+            var height = container.clientHeight || window.innerHeight;
+            if (width === 0 || height === 0) return;
+            camera.aspect = width / height;
+            camera.updateProjectionMatrix();
+            renderer.setSize(width, height);
+            renderOnce();
+        }
+
+        // =========================================================================
+        // NETWORK BUILDER
+        // =========================================================================
+        window.loadModel = function(arch) {
+            modelData = arch;
+            document.getElementById('lbl-model-name').textContent = arch.model_name || "Neural Network";
+
+            clearScene();
+            buildNetworkGraph();
+            fitNetwork();
+            renderOnce();
+            emitBridgeEvent('model_rendered', { model_id: arch.model_id, total_layers: arch.total_layers });
+        };
+
+        function clearScene() {
+            // Remove node meshes
+            for (var i = 0; i < layerNodes.length; i++) {
+                for (var j = 0; j < layerNodes[i].length; j++) {
+                    scene.remove(layerNodes[i][j]);
+                }
+            }
+            layerNodes = [];
+            layerPositions = [];
+
+            // Remove connection edges
+            for (var k = 0; k < connectionMeshes.length; k++) {
+                scene.remove(connectionMeshes[k]);
+            }
+            connectionMeshes = [];
+
+            if (signalParticles) {
+                scene.remove(signalParticles);
+                signalParticles = null;
+            }
+
+            // Remove layer labels
+            labelsContainer.innerHTML = '';
+            layerLabelElements = [];
+            selectedLayerIndex = null;
+            selectedNeuron = null;
+            hoveredNeuron = null;
+            currentActivations = null;
+            tooltip.style.display = 'none';
+        }
+
+        function buildNetworkGraph() {
+            if (!modelData || !modelData.layers) return;
+
+            var layers = modelData.layers;
+            var numLayers = layers.length;
+
+            // X-spacing across layers
+            var totalWidth = 520;
+            var xSpacing = totalWidth / Math.max(numLayers - 1, 1);
+            var startX = -totalWidth / 2;
+
+            var sphereGeo = new THREE.SphereGeometry(3.6, 16, 16);
+
+            for (var l = 0; l < numLayers; l++) {
+                var layer = layers[l];
+                var count = layer.units;
+                var xPos = startX + l * xSpacing;
+
+                var nodesInLayer = [];
+                var posInLayer = [];
+
+                // Calculate layout grid for this layer
+                var cols, rows;
+                if (count <= 10) {
+                    cols = 1;
+                    rows = count;
+                } else if (count <= 24) {
+                    cols = 3;
+                    rows = Math.ceil(count / cols);
+                } else if (count <= 40) {
+                    cols = 4;
+                    rows = Math.ceil(count / cols);
+                } else {
+                    cols = 8;
+                    rows = Math.ceil(count / cols);
+                }
+
+                var spacingY = count <= 10 ? 28 : (count <= 32 ? 18 : 12);
+                var spacingZ = count <= 10 ? 0 : (count <= 32 ? 18 : 12);
+
+                var totalH = (rows - 1) * spacingY;
+                var totalD = (cols - 1) * spacingZ;
+
+                for (var n = 0; n < count; n++) {
+                    var r = Math.floor(n / cols);
+                    var c = n % cols;
+
+                    var yPos = -(r * spacingY - totalH / 2);
+                    var zPos = (c * spacingZ - totalD / 2);
+
+                    var mat = new THREE.MeshStandardMaterial({
+                        color: COLOR_NEURON_INACTIVE,
+                        roughness: 0.35,
+                        metalness: 0.25,
+                        emissive: 0x0F172A,
+                        emissiveIntensity: 0.3
+                    });
+
+                    var mesh = new THREE.Mesh(sphereGeo, mat);
+                    mesh.position.set(xPos, yPos, zPos);
+                    mesh.userData = {
+                        layerIndex: l,
+                        neuronIndex: n,
+                        layerName: layer.name,
+                        layerType: layer.layer_type,
+                        bias: (layer.bias_mean || 0.0),
+                        activation: 0.0,
+                        className: (l === numLayers - 1 && modelData.classes && modelData.classes[n]) ? modelData.classes[n] : null
+                    };
+
+                    scene.add(mesh);
+                    nodesInLayer.push(mesh);
+                    posInLayer.push(new THREE.Vector3(xPos, yPos, zPos));
+                }
+
+                layerNodes.push(nodesInLayer);
+                layerPositions.push(posInLayer);
+
+                // Create Floating HTML Layer Label
+                createLayerLabel(l, layer, xPos, totalH / 2 + 28);
+            }
+
+            // Build connections between adjacent layers using high-performance LineSegments
+            buildConnections();
+        }
+
+        function buildConnections() {
+            for (var l = 0; l < layerPositions.length - 1; l++) {
+                var posA = layerPositions[l];
+                var posB = layerPositions[l + 1];
+
+                var linePositions = [];
+                var lineColors = [];
+
+                // For large dense layers (e.g. 64x32), sample connections cleanly if count is huge
+                var maxConnections = 3000;
+                var totalPossible = posA.length * posB.length;
+                var stride = Math.max(1, Math.floor(totalPossible / maxConnections));
+
+                var count = 0;
+                for (var i = 0; i < posA.length; i++) {
+                    for (var j = 0; j < posB.length; j++) {
+                        count++;
+                        if (stride > 1 && count % stride !== 0) continue;
+
+                        var p1 = posA[i];
+                        var p2 = posB[j];
+
+                        linePositions.push(p1.x, p1.y, p1.z);
+                        linePositions.push(p2.x, p2.y, p2.z);
+
+                        // Alternate subtle positive / negative tint
+                        var col = ((i + j) % 2 === 0) ? COLOR_EDGE_POS : COLOR_EDGE_NEG;
+                        lineColors.push(col.r * 0.25, col.g * 0.25, col.b * 0.25);
+                        lineColors.push(col.r * 0.25, col.g * 0.25, col.b * 0.25);
+                    }
+                }
+
+                var geometry = new THREE.BufferGeometry();
+                geometry.setAttribute('position', new THREE.Float32BufferAttribute(linePositions, 3));
+                geometry.setAttribute('color', new THREE.Float32BufferAttribute(lineColors, 3));
+
+                var material = new THREE.LineBasicMaterial({
+                    vertexColors: true,
+                    transparent: true,
+                    opacity: 0.45,
+                    blending: THREE.AdditiveBlending
+                });
+
+                var lines = new THREE.LineSegments(geometry, material);
+                lines.userData = { fromLayer: l, toLayer: l + 1 };
+                scene.add(lines);
+                connectionMeshes.push(lines);
+            }
+        }
+
+        function createLayerLabel(layerIdx, layer, xPos, yPos) {
+            var el = document.createElement('div');
+            el.className = 'layer-floating-label';
+            el.dataset.layer = layerIdx;
+            el.innerHTML = (layerIdx === 0 ? "INPUT" : (layerIdx === modelData.layers.length - 1 ? "OUTPUT" : "HIDDEN " + layerIdx)) +
+                           `<span class="sub">${layer.units} Units • ${layer.activation}</span>`;
+
+            el.addEventListener('click', function(e) {
+                e.stopPropagation();
+                window.selectLayer(layerIdx);
+            });
+
+            labelsContainer.appendChild(el);
+            layerLabelElements.push({ element: el, pos: new THREE.Vector3(xPos, yPos, 0) });
+        }
+
+        function updateLayerLabelsPositions() {
+            for (var i = 0; i < layerLabelElements.length; i++) {
+                var item = layerLabelElements[i];
+                var v = item.pos.clone();
+                v.project(camera);
+
+                if (v.z > 1) {
+                    item.element.style.display = 'none';
+                    continue;
+                }
+                item.element.style.display = 'block';
+
+                var hw = container.clientWidth / 2;
+                var hh = container.clientHeight / 2;
+                var x = (v.x * hw) + hw;
+                var y = -(v.y * hh) + hh;
+
+                item.element.style.left = x + 'px';
+                item.element.style.top = y + 'px';
+            }
+        }
+
+        // =========================================================================
+        // FORWARD PASS ANIMATION (Authentic Propagation)
+        // =========================================================================
+        window.runForwardPass = function(forwardResult) {
+            if (!forwardResult || !forwardResult.layer_activations) return;
+            currentActivations = forwardResult.layer_activations;
+
+            document.getElementById('lbl-inference-status').textContent = "Propagating (" + (forwardResult.latency_ms || 0).toFixed(1) + "ms)";
+
+            // Reset all nodes to base state before propagation
+            resetNodeActivations();
+
+            animStep = 0;
+            animProgress = 0;
+            isAnimating = true;
+            isPaused = false;
+            startAnimationLoop();
+        };
+
+        function resetNodeActivations() {
+            for (var l = 0; l < layerNodes.length; l++) {
+                for (var n = 0; n < layerNodes[l].length; n++) {
+                    var mesh = layerNodes[l][n];
+                    mesh.material.color.setHex(COLOR_NEURON_INACTIVE);
+                    mesh.material.emissive.setHex(0x0F172A);
+                    mesh.material.emissiveIntensity = 0.25;
+                    mesh.scale.set(1.0, 1.0, 1.0);
+                }
+            }
+        }
+
+        function activateLayerNodes(layerIdx) {
+            if (!currentActivations || layerIdx >= currentActivations.length) return;
+            var acts = currentActivations[layerIdx];
+            var nodes = layerNodes[layerIdx];
+            if (!nodes) return;
+
+            var maxAct = Math.max.apply(null, acts) || 1.0;
+            var isOutput = (layerIdx === layerNodes.length - 1);
+            var bestIdx = isOutput ? acts.indexOf(maxAct) : -1;
+
+            for (var n = 0; n < nodes.length && n < acts.length; n++) {
+                var val = acts[n];
+                var mesh = nodes[n];
+                mesh.userData.activation = val;
+
+                var normVal = Math.min(Math.max(val / maxAct, 0.0), 1.0);
+
+                if (isOutput && n === bestIdx) {
+                    // Winning predicted class: Glowing Emerald Green
+                    mesh.material.color.setHex(COLOR_NEURON_OUTPUT_WIN);
+                    mesh.material.emissive.setHex(COLOR_NEURON_OUTPUT_WIN);
+                    mesh.material.emissiveIntensity = 1.4;
+                    mesh.scale.set(1.5, 1.5, 1.5);
+                } else if (normVal > 0.05) {
+                    // Active neuron: Electric Cyan / Blue with intensity scaled by true activation
+                    mesh.material.color.setHex(COLOR_NEURON_ACTIVE);
+                    mesh.material.emissive.setHex(COLOR_NEURON_ACTIVE);
+                    mesh.material.emissiveIntensity = 0.4 + normVal * 0.9;
+                    mesh.scale.set(1.0 + normVal * 0.35, 1.0 + normVal * 0.35, 1.0 + normVal * 0.35);
+                } else {
+                    // Dormant neuron
+                    mesh.material.color.setHex(COLOR_NEURON_INACTIVE);
+                    mesh.material.emissive.setHex(0x0F172A);
+                    mesh.material.emissiveIntensity = 0.2;
+                    mesh.scale.set(1.0, 1.0, 1.0);
+                }
+            }
+        }
+
+        // =========================================================================
+        // SELECTION & INTERACTION
+        // =========================================================================
+        window.selectLayer = function(layerIdx) {
+            selectedLayerIndex = layerIdx;
+
+            // Update label styles
+            for (var i = 0; i < layerLabelElements.length; i++) {
+                var el = layerLabelElements[i].element;
+                if (i === layerIdx) {
+                    el.classList.add('selected');
+                } else {
+                    el.classList.remove('selected');
+                }
+            }
+
+            // Highlight nodes in selected layer
+            for (var l = 0; l < layerNodes.length; l++) {
+                var isSelected = (l === layerIdx);
+                for (var n = 0; n < layerNodes[l].length; n++) {
+                    var mesh = layerNodes[l][n];
+                    if (isSelected) {
+                        mesh.material.emissive.setHex(COLOR_NEURON_SELECTED);
+                        mesh.material.emissiveIntensity = 0.8;
+                    } else if (!currentActivations) {
+                        mesh.material.emissive.setHex(0x0F172A);
+                        mesh.material.emissiveIntensity = 0.25;
+                    }
+                }
+            }
+
+            emitBridgeEvent('layer_selected', { layer_index: layerIdx });
+            renderOnce();
+        };
+
+        window.selectNeuron = function(layerIdx, neuronIdx) {
+            selectedNeuron = { layer: layerIdx, index: neuronIdx };
+
+            if (layerNodes[layerIdx] && layerNodes[layerIdx][neuronIdx]) {
+                var mesh = layerNodes[layerIdx][neuronIdx];
+                mesh.material.emissive.setHex(COLOR_NEURON_SELECTED);
+                mesh.material.emissiveIntensity = 1.6;
+                mesh.scale.set(1.6, 1.6, 1.6);
+            }
+
+            emitBridgeEvent('neuron_selected', { layer_index: layerIdx, neuron_index: neuronIdx });
+            renderOnce();
+        };
+
+        function onMouseMove(event) {
+            var rect = container.getBoundingClientRect();
+            mouse.x = ((event.clientX - rect.left) / container.clientWidth) * 2 - 1;
+            mouse.y = -((event.clientY - rect.top) / container.clientHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+
+            // Raycast against neuron spheres
+            var allMeshes = [];
+            for (var l = 0; l < layerNodes.length; l++) {
+                for (var n = 0; n < layerNodes[l].length; n++) {
+                    allMeshes.push(layerNodes[l][n]);
+                }
+            }
+
+            var intersects = raycaster.intersectObjects(allMeshes, false);
+
+            if (intersects.length > 0) {
+                var hit = intersects[0].object;
+                container.style.cursor = 'pointer';
+
+                if (hoveredNeuron !== hit) {
+                    hoveredNeuron = hit;
+                    showTooltip(hit, event.clientX, event.clientY);
+                    renderOnce();
+                } else {
+                    positionTooltip(event.clientX, event.clientY);
+                }
+            } else {
+                container.style.cursor = 'grab';
+                if (hoveredNeuron) {
+                    hoveredNeuron = null;
+                    tooltip.style.display = 'none';
+                    renderOnce();
+                }
+            }
+        }
+
+        function showTooltip(mesh, clientX, clientY) {
+            var d = mesh.userData;
+            document.getElementById('tt-neuron-id').textContent = `Layer ${d.layerIndex} : Neuron #${d.neuronIndex}`;
+            document.getElementById('tt-layer-type').textContent = d.layerType || "Dense";
+            document.getElementById('tt-activation').textContent = (d.activation !== undefined ? Number(d.activation).toFixed(4) : "0.0000");
+            document.getElementById('tt-bias').textContent = (d.bias !== undefined ? Number(d.bias).toFixed(4) : "0.0000");
+
+            var classRow = document.getElementById('tt-class-row');
+            if (d.className) {
+                classRow.style.display = 'flex';
+                document.getElementById('tt-class').textContent = d.className;
+            } else {
+                classRow.style.display = 'none';
+            }
+
+            tooltip.style.display = 'block';
+            positionTooltip(clientX, clientY);
+        }
+
+        function positionTooltip(clientX, clientY) {
+            tooltip.style.left = (clientX + 16) + 'px';
+            tooltip.style.top = (clientY + 16) + 'px';
+        }
+
+        function onClick(event) {
+            if (hoveredNeuron) {
+                var d = hoveredNeuron.userData;
+                window.selectNeuron(d.layerIndex, d.neuronIndex);
+            }
+        }
+
+        // =========================================================================
+        // CAMERA UTILITIES
+        // =========================================================================
+        function resetCamera() {
+            camera.position.set(0, 80, 680);
+            controls.target.set(0, 0, 0);
+            controls.update();
+            renderOnce();
+        }
+
+        function fitNetwork() {
+            if (layerPositions.length === 0) return;
+            var box = new THREE.Box3();
+            for (var l = 0; l < layerPositions.length; l++) {
+                for (var n = 0; n < layerPositions[l].length; n++) {
+                    box.expandByPoint(layerPositions[l][n]);
+                }
+            }
+            var size = new THREE.Vector3();
+            box.getSize(size);
+            var maxDim = Math.max(size.x, size.y, size.z);
+            var fov = camera.fov * (Math.PI / 180);
+            var cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.35;
+
+            camera.position.set(0, size.y * 0.15, Math.max(cameraZ, 450));
+            controls.target.set(0, 0, 0);
+            controls.update();
+            renderOnce();
+        }
+
+        function zoomCamera(factor) {
+            camera.position.multiplyScalar(factor);
+            controls.update();
+            renderOnce();
+        }
+
+        window.resetCamera = resetCamera;
+        window.fitNetwork = fitNetwork;
+        window.setAnimationSpeed = function(speed) { animSpeed = Math.max(0.2, speed); };
+        window.pauseAnimation = function() { isPaused = true; };
+        window.resumeAnimation = function() {
+            isPaused = false;
+            if (isAnimating) startAnimationLoop();
+        };
+
+        // =========================================================================
+        // ON-DEMAND RENDERING & CONTROLLED ANIMATION LOOP
+        // =========================================================================
+        function renderOnce() {
+            if (!isPageActive || !renderer || !scene || !camera) return;
+            controls.update();
+            updateLayerLabelsPositions();
+            renderer.render(scene, camera);
+        }
+        window.renderOnce = renderOnce;
+
+        function startAnimationLoop() {
+            if (!isPageActive) return;
+            if (!animFrameId) {
+                isLoopRunning = true;
+                animFrameId = requestAnimationFrame(animate);
+            }
+        }
+        window.startAnimationLoop = startAnimationLoop;
+
+        function stopAnimationLoop() {
+            if (animFrameId) {
+                cancelAnimationFrame(animFrameId);
+                animFrameId = null;
+            }
+            isLoopRunning = false;
+        }
+        window.stopAnimationLoop = stopAnimationLoop;
+
+        window.isLoopRunning = function() {
+            return isLoopRunning && animFrameId !== null;
+        };
+
+        window.setPageActive = function(active) {
+            isPageActive = !!active;
+            if (!isPageActive) {
+                isAnimating = false;
+                userInteracting = false;
+                dampingFrames = 0;
+                stopAnimationLoop();
+            } else {
+                renderOnce();
+            }
+        };
+
+        window.cleanupScene = function() {
+            isPageActive = false;
+            stopAnimationLoop();
+            clearScene();
+            if (renderer) {
+                renderer.dispose();
+            }
+        };
+
+        function animate() {
+            if (!isPageActive) {
+                stopAnimationLoop();
+                return;
+            }
+
+            var continueLoop = false;
+
+            if (userInteracting) {
+                continueLoop = true;
+                controls.update();
+            } else if (dampingFrames > 0) {
+                dampingFrames--;
+                controls.update();
+                continueLoop = true;
+            }
+
+            updateLayerLabelsPositions();
+
+            // Forward Pass step propagation
+            if (isAnimating && !isPaused && currentActivations) {
+                animProgress += 0.045 * animSpeed;
+
+                if (animProgress >= 1.0) {
+                    animProgress = 0;
+                    activateLayerNodes(animStep);
+                    animStep++;
+
+                    if (animStep >= layerNodes.length) {
+                        isAnimating = false;
+                        document.getElementById('lbl-inference-status').textContent = "Inference Complete";
+                        emitBridgeEvent('forward_pass_finished', { total_layers: layerNodes.length });
+                    }
+                }
+                continueLoop = true;
+            }
+
+            renderer.render(scene, camera);
+
+            if (continueLoop && isPageActive) {
+                animFrameId = requestAnimationFrame(animate);
+                isLoopRunning = true;
+            } else {
+                stopAnimationLoop();
+            }
+        }
+
+        // Initialize when DOM ready
+        window.addEventListener('DOMContentLoaded', initScene);
+    </script>
+</body>
+</html>
