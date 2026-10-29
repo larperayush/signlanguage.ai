@@ -3,8 +3,13 @@ Application Entry Point and Lifecycle Manager.
 Initializes High-DPI support, Windows AppUserModelID, Theme, and MainWindow.
 """
 import sys
+import os
+import tempfile
 import ctypes
 from pathlib import Path
+
+# Silence matplotlib cache dir warnings on Windows
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import Qt

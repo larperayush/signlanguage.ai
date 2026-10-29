@@ -1,19 +1,17 @@
 """
 Persistent Left Sidebar Navigation Component for SignFlow Studio.
-Editorial, tactile design with Warm Cream / Espresso Charcoal styling.
-By default displays streamlined user navigation (Live Translation, Settings).
+Displays Live Translation.
 Developer tools (Static Training, Dynamic Training, Dataset Manager, etc.)
-are accessed via the "Self Train" section in Settings.
+only appear when a Developer Model Package is loaded.
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QButtonGroup, QSizePolicy
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame, QButtonGroup
 )
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 
 from app.resources.icons import get_icon, get_pixmap
 from app.core.theme import ThemeManager
-from app.core.config import SettingsManager
 
 
 class Sidebar(QWidget):
@@ -87,19 +85,14 @@ class Sidebar(QWidget):
         self.nav_vbox = QVBoxLayout()
         self.nav_vbox.setSpacing(6)
 
-        # Primary user navigation items
-        user_items = [
-            (self.PAGE_TRANSLATE, "Live Translation", "predict", True),
-            (self.PAGE_SETTINGS, "Settings & Self Train", "settings", False),
-        ]
+        # 1. Main Navigation Item (Exclusively Live Translation)
+        btn_translate = self._create_nav_btn(self.PAGE_TRANSLATE, "Live Translation", "predict", True)
+        self.nav_vbox.addWidget(btn_translate)
 
-        for page_idx, label, icon_name, is_prominent in user_items:
-            btn = self._create_nav_btn(page_idx, label, icon_name, is_prominent)
-            self.nav_vbox.addWidget(btn)
-
-        # Developer Section Header & Buttons (Self Train tools)
-        self.dev_header = QLabel("SELF TRAIN TOOLS")
-        self.dev_header.setStyleSheet(f"font-size: 9.5px; font-weight: 700; color: {palette.text_muted}; letter-spacing: 0.6px; padding: 12px 6px 4px 6px;")
+        # 2. Developer Tools Section Header & Items
+        # (Only visible when a Developer Model Package is loaded)
+        self.dev_header = QLabel("DEVELOPER SUITE")
+        self.dev_header.setStyleSheet(f"font-size: 9.5px; font-weight: 700; color: {palette.text_muted}; letter-spacing: 0.6px; padding: 14px 6px 4px 6px;")
         self.nav_vbox.addWidget(self.dev_header)
         self._dev_widgets.append(self.dev_header)
 
@@ -137,7 +130,7 @@ class Sidebar(QWidget):
         b_layout.addWidget(self.vcam_status_lbl)
         main_layout.addWidget(bottom_box)
 
-        # Check saved setting for developer mode
+        # By default developer mode is False
         self.set_developer_mode(False)
 
     def _create_nav_btn(self, page_idx: int, label: str, icon_name: str, is_prominent: bool) -> QPushButton:
@@ -157,7 +150,7 @@ class Sidebar(QWidget):
         return btn
 
     def set_developer_mode(self, enabled: bool):
-        """Show or hide developer tools."""
+        """Show or hide developer suite tools."""
         self._developer_mode = enabled
         for w in self._dev_widgets:
             w.setVisible(enabled)
@@ -186,5 +179,4 @@ class Sidebar(QWidget):
         self.vcam_status_lbl.setStyleSheet(f"font-size: 11px; color: {color}; font-weight: 500;")
 
     def update_backend_status(self, text: str, is_connected: bool):
-        """Optional hook for backend connectivity status."""
         pass

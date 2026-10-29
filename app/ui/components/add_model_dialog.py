@@ -1,9 +1,8 @@
 """
 Smart Model Importer Dialog for SignFlow Studio.
 Allows users to select an external model folder, inspects and verifies:
-- predict_live.py
-- models/asl_classifier.joblib
-- models/hand_landmarker.task
+- User Model: predict_live.py + models/asl_classifier.joblib + models/hand_landmarker.task
+- Developer Model: adds train_model.py, collect_static/dynamic, datasets, and old models.
 Prompts for custom name and registers it into the ModelRegistry harness.
 """
 from pathlib import Path
@@ -15,7 +14,7 @@ from PySide6.QtCore import Qt, Signal
 
 from app.core.theme import ThemeManager
 from app.core.model_registry import ModelRegistry, detect_model_in_folder
-from app.resources.icons import get_icon, get_pixmap
+from app.resources.icons import get_icon
 
 
 class AddModelDialog(QDialog):
@@ -25,7 +24,7 @@ class AddModelDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add AI Model Package")
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(580)
         self.setModal(True)
 
         self._detected_data = None
@@ -40,11 +39,11 @@ class AddModelDialog(QDialog):
         # Header Title & Editorial Note
         header_vbox = QVBoxLayout()
         header_vbox.setSpacing(4)
-        title = QLabel("Import Sign Language Model")
+        title = QLabel("Import Sign Language Model Package")
         title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {palette.text_primary};")
         desc = QLabel(
-            "Select any trained model directory. SignFlow automatically verifies the "
-            "presence of predict_live.py, asl_classifier.joblib, and hand_landmarker.task."
+            "Point to any model folder. SignFlow inspects the folder to detect if it is a "
+            "User Model (inference only) or a Developer Model Suite (with training scripts and datasets)."
         )
         desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
         desc.setWordWrap(True)
@@ -86,18 +85,22 @@ class AddModelDialog(QDialog):
         self.status_panel.setVisible(False)
         sp_layout = QVBoxLayout(self.status_panel)
         sp_layout.setContentsMargins(16, 14, 16, 14)
-        sp_layout.setSpacing(8)
+        sp_layout.setSpacing(6)
 
         self.status_title = QLabel("Model Verification")
-        self.status_title.setStyleSheet("font-size: 12px; font-weight: 700;")
+        self.status_title.setStyleSheet("font-size: 12.5px; font-weight: 700;")
         sp_layout.addWidget(self.status_title)
+
+        self.lbl_type_badge = QLabel("—")
+        self.lbl_type_badge.setStyleSheet(f"font-size: 11.5px; font-weight: 600; color: {palette.accent_label};")
+        sp_layout.addWidget(self.lbl_type_badge)
 
         self.lbl_predict = QLabel("—")
         self.lbl_classifier = QLabel("—")
         self.lbl_task = QLabel("—")
-        self.lbl_classes = QLabel("—")
+        self.lbl_dev_suite = QLabel("—")
 
-        for lbl in (self.lbl_predict, self.lbl_classifier, self.lbl_task, self.lbl_classes):
+        for lbl in (self.lbl_predict, self.lbl_classifier, self.lbl_task, self.lbl_dev_suite):
             lbl.setStyleSheet(f"font-size: 11.5px; color: {palette.text_secondary};")
             sp_layout.addWidget(lbl)
 
@@ -115,7 +118,7 @@ class AddModelDialog(QDialog):
         nc_layout.addWidget(name_lbl)
 
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("e.g. Ayush & Rajat ASL Classifier v1")
+        self.name_input.setPlaceholderText("e.g. My Custom ASL Model")
         nc_layout.addWidget(self.name_input)
 
         layout.addWidget(name_card)
@@ -161,20 +164,23 @@ class AddModelDialog(QDialog):
 
         palette = ThemeManager.get_palette()
         if res["is_valid"]:
-            self.status_title.setText("✓ Verified Model Structure")
-            self.status_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {palette.success};")
+            self.status_title.setText("✓ Verified Model Package")
+            self.status_title.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {palette.success};")
 
-            p_txt = Path(res['predict_script']).name if res.get('predict_script') else "Not present (Optional)"
-            self.lbl_predict.setText(f"• Predict Script: {p_txt}")
-            self.lbl_classifier.setText(f"• Classifier: {Path(res['classifier_path']).name} (✓ Valid)")
-            self.lbl_task.setText(f"• Landmarker: {Path(res['task_path']).name} (✓ Valid)")
-
-            classes_count = len(res.get("classes", []))
-            if classes_count > 0:
-                cls_sample = ", ".join(res["classes"][:8])
-                self.lbl_classes.setText(f"• Sign Classes ({classes_count}): {cls_sample}...")
+            is_dev = res.get("is_developer", False)
+            if is_dev:
+                self.lbl_type_badge.setText("PACKAGE TYPE: DEVELOPER MODEL SUITE (TRAINING + INFERENCE)")
+                self.lbl_type_badge.setStyleSheet(f"font-size: 11.5px; font-weight: 700; color: {palette.accent_label};")
+                self.lbl_dev_suite.setText("• Developer Suite: train_model.py, collect scripts, and datasets verified!")
             else:
-                self.lbl_classes.setText("• Sign Classes: Standard ASL Feature Set")
+                self.lbl_type_badge.setText("PACKAGE TYPE: USER MODEL (INFERENCE ONLY)")
+                self.lbl_type_badge.setStyleSheet(f"font-size: 11.5px; font-weight: 700; color: {palette.text_secondary};")
+                self.lbl_dev_suite.setText("• Standalone User Model (no training files detected)")
+
+            p_txt = Path(res['predict_script']).name
+            self.lbl_predict.setText(f"• Predict Script: {p_txt} (✓ Found)")
+            self.lbl_classifier.setText(f"• Classifier: {Path(res['classifier_path']).name} (✓ Found)")
+            self.lbl_task.setText(f"• Landmarker: {Path(res['task_path']).name} (✓ Found)")
 
             if not self.name_input.text():
                 self.name_input.setText(res["suggested_name"])
@@ -182,11 +188,13 @@ class AddModelDialog(QDialog):
             self.import_btn.setEnabled(True)
         else:
             self.status_title.setText("✗ Incomplete Model Directory")
-            self.status_title.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {palette.danger};")
-            self.lbl_predict.setText(f"Error: {res['error_msg']}")
-            self.lbl_classifier.setText("Ensure folder has asl_classifier.joblib and hand_landmarker.task.")
-            self.lbl_task.setText("")
-            self.lbl_classes.setText("")
+            self.status_title.setStyleSheet(f"font-size: 12.5px; font-weight: 700; color: {palette.danger};")
+            self.lbl_type_badge.setText(f"Error: {res['error_msg']}")
+            self.lbl_type_badge.setStyleSheet(f"font-size: 11.5px; color: {palette.danger};")
+            self.lbl_predict.setText("Required structure:")
+            self.lbl_classifier.setText("  - predict_live.py (in root)")
+            self.lbl_task.setText("  - models/asl_classifier.joblib & models/hand_landmarker.task")
+            self.lbl_dev_suite.setText("")
             self.import_btn.setEnabled(False)
 
     def _on_import_clicked(self):

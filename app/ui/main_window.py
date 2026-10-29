@@ -116,8 +116,21 @@ class MainWindow(QMainWindow):
         # Connect Backend Manager Status
         self.backend_manager = BackendManager.get_instance()
 
+        # Connect Model Registry active package changes to sidebar developer tools visibility
+        from app.core.model_registry import ModelRegistry, ModelPackage
+        self.model_registry = ModelRegistry.get_instance()
+        self.model_registry.active_package_changed.connect(self._on_active_package_changed)
+        self._on_active_package_changed(self.model_registry.get_active_package())
+
         # Initial Page: Live Translation
         self._navigate_to_page(0)
+
+    def _on_active_package_changed(self, package: Optional[Any]):
+        """Show developer suite in sidebar only if active model is a Developer Model."""
+        if package and getattr(package, "is_developer", False):
+            self.sidebar.set_developer_mode(True)
+        else:
+            self.sidebar.set_developer_mode(False)
 
     def _on_self_train_requested(self):
         """Open developer static training workspace from Settings Self Train button."""

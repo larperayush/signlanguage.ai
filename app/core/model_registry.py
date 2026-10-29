@@ -1,7 +1,9 @@
 """
-Model Manager Registry & Harness Service for SignFlow Studio.
-Registers runnable AI model packages (classifier + landmarker task + predict script)
-and individual artifacts, enabling fast switching between trained models.
+Model Manager Registry & Open-Source Harness Service for SignFlow Studio.
+Acts as a pure harness: no built-in models.
+Allows importing:
+- User Model Packages (inference only: predict_live.py + models/asl_classifier.joblib + models/hand_landmarker.task)
+- Developer Model Packages (full suite: includes collect_static/dynamic, train_model.py, datasets, etc.)
 """
 from pathlib import Path
 import json
@@ -12,7 +14,7 @@ from dataclasses import dataclass, field, asdict
 
 from PySide6.QtCore import QObject, Signal, QSettings
 
-from app.core.config import ROOT_DIR, MODELS_DIR, ASL_CLASSIFIER_MODEL, HAND_LANDMARKER_TASK, ORGANIZATION_NAME, APP_NAME
+from app.core.config import ORGANIZATION_NAME, APP_NAME
 
 MODEL_EXTENSIONS = {
     ".joblib": "Scikit-Learn Classifier (.joblib)",
@@ -29,13 +31,15 @@ MODEL_EXTENSIONS = {
 
 @dataclass
 class ModelPackage:
-    """A runnable model harness package containing classifier, task, and optional predict script."""
+    """A runnable model harness package containing classifier, task, and predict script."""
     id: str
     name: str
     folder_path: str
     classifier_path: str
     task_path: str
-    predict_script: Optional[str] = None
+    predict_script: str
+    is_developer: bool = False
+    model_type: str = "user"  # "developer" or "user"
     classes: List[str] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
     is_valid: bool = True
@@ -57,10 +61,22 @@ class ModelEntry:
 
 def detect_model_in_folder(folder_path: str) -> Dict[str, Any]:
     """
-    Inspect a folder to auto-detect model components:
-    - predict_live.py
-    - asl_classifier.joblib (or *.joblib classifier)
-    - hand_landmarker.task (or *.task landmarker)
+    Inspect a folder to determine whether it is a User Model or Developer Model.
+    
+    Structure Required:
+    - User Model:
+        predict_live.py
+        models/asl_classifier.joblib
+        models/hand_landmarker.task
+        
+    - Developer Model adds:
+        collect_dynamic_data.py
+        collect_static_data.py
+        train_model.py
+        models (folder)
+        old models (folder)
+        dynamic_signs.csv
+        static_signs.csv
     """
     root = Path(folder_path).resolve()
     if not root.exists() or not root.is_dir():
@@ -69,80 +85,118 @@ def detect_model_in_folder(folder_path: str) -> Dict[str, Any]:
             "error_msg": f"Directory not found: {folder_path}"
         }
 
-    # Search candidates
-    predict_script = None
+    # 1. Check core execution script: predict_live.py
+    predict_script = root / "predict_live.py"
+    if not predict_script.exists():
+        candidates = list(root.glob("*.py"))
+        if candidates:
+            predict_script = candidates[0]
+        else:
+            return {
+                "is_valid": False,
+                "error_msg": "Missing predict_live.py in the selected folder."
+            }
+
+    # 2. Check classifier in models/ or root
+    models_dir = root / "models"
     classifier_path = None
-    task_path = None
+    if models_dir.exists():
+        c_target = models_dir / "asl_classifier.joblib"
+        if c_target.exists():
+            classifier_path = c_target
+        else:
+            joblibs = list(models_dir.glob("*.joblib")) + list(models_dir.glob("*.pkl"))
+            if joblibs:
+                classifier_path = joblibs[0]
 
-    # Check root for predict_live.py
-    candidate_scripts = list(root.glob("predict_live.py")) + list(root.glob("*.py"))
-    if candidate_scripts:
-        # Prefer predict_live.py if present
-        named = [s for s in candidate_scripts if s.name.lower() == "predict_live.py"]
-        predict_script = str(named[0]) if named else str(candidate_scripts[0])
+    if not classifier_path:
+        root_joblibs = list(root.glob("*.joblib")) + list(root.glob("*.pkl"))
+        if root_joblibs:
+            classifier_path = root_joblibs[0]
 
-    # Search for classifier (.joblib, .pkl)
-    candidate_classifiers = (
-        list(root.glob("models/*.joblib")) +
-        list(root.glob("model/*.joblib")) +
-        list(root.glob("*.joblib")) +
-        list(root.glob("models/*.pkl")) +
-        list(root.glob("*.pkl"))
-    )
-    if candidate_classifiers:
-        # Prefer asl_classifier.joblib if present
-        named = [c for c in candidate_classifiers if "classifier" in c.name.lower()]
-        classifier_path = str(named[0]) if named else str(candidate_classifiers[0])
-
-    # Search for hand_landmarker.task
-    candidate_tasks = (
-        list(root.glob("models/*.task")) +
-        list(root.glob("model/*.task")) +
-        list(root.glob("*.task"))
-    )
-    if candidate_tasks:
-        task_path = str(candidate_tasks[0])
-    elif HAND_LANDMARKER_TASK.exists():
-        # Fallback to studio's default hand_landmarker.task
-        task_path = str(HAND_LANDMARKER_TASK.resolve())
-
-    # Validation
     if not classifier_path:
         return {
             "is_valid": False,
-            "error_msg": "No classifier file (*.joblib / *.pkl) found in selected folder or 'models/' subfolder."
+            "error_msg": "Missing asl_classifier.joblib (checked models/ and root folder)."
         }
+
+    # 3. Check MediaPipe hand task in models/ or root
+    task_path = None
+    if models_dir.exists():
+        t_target = models_dir / "hand_landmarker.task"
+        if t_target.exists():
+            task_path = t_target
+        else:
+            tasks = list(models_dir.glob("*.task"))
+            if tasks:
+                task_path = tasks[0]
+
+    if not task_path:
+        root_tasks = list(root.glob("*.task"))
+        if root_tasks:
+            task_path = root_tasks[0]
+
     if not task_path:
         return {
             "is_valid": False,
-            "error_msg": "No MediaPipe task bundle (*.task) found in selected folder or studio defaults."
+            "error_msg": "Missing hand_landmarker.task (checked models/ and root folder)."
         }
+
+    # 4. Check Developer Model Suite criteria
+    dev_files = {
+        "collect_dynamic_data.py": (root / "collect_dynamic_data.py").exists(),
+        "collect_static_data.py": (root / "collect_static_data.py").exists(),
+        "predict_live.py": (root / "predict_live.py").exists(),
+        "train_model.py": (root / "train_model.py").exists(),
+        "models": (root / "models").is_dir(),
+        "old_models": (root / "old models").is_dir() or (root / "old_models").is_dir(),
+        "dynamic_signs.csv": (root / "dynamic_signs.csv").exists() or (root / "dynamic_sign.csv").exists(),
+        "static_signs.csv": (root / "static_signs.csv").exists() or (root / "static_sign.csv").exists(),
+    }
+
+    # Qualifying as Developer Model requires train_model.py, collection scripts, and dataset CSVs
+    is_developer = (
+        dev_files["train_model.py"] and
+        dev_files["collect_static_data.py"] and
+        (dev_files["static_signs.csv"] or dev_files["dynamic_signs.csv"])
+    )
+
+    model_type = "developer" if is_developer else "user"
+    badge_label = "Developer Suite" if is_developer else "User Model"
+    suggested_name = f"{root.name} [{badge_label}]"
 
     # Extract class labels safely if possible
     classes: List[str] = []
     try:
         import joblib
-        clf = joblib.load(classifier_path)
+        clf = joblib.load(str(classifier_path))
         if hasattr(clf, "classes_"):
             classes = [str(c) for c in clf.classes_]
+        elif isinstance(clf, dict) and "classes_" in clf:
+            classes = [str(c) for c in clf["classes_"]]
     except Exception:
         pass
 
     return {
         "is_valid": True,
+        "is_developer": is_developer,
+        "model_type": model_type,
         "folder_path": str(root),
-        "suggested_name": f"{root.name} ASL Model",
-        "predict_script": predict_script,
-        "classifier_path": classifier_path,
-        "task_path": task_path,
+        "suggested_name": suggested_name,
+        "predict_script": str(predict_script.resolve()),
+        "classifier_path": str(classifier_path.resolve()),
+        "task_path": str(task_path.resolve()),
         "classes": classes,
+        "dev_files": dev_files,
         "error_msg": ""
     }
 
 
 class ModelRegistry(QObject):
     """
-    Application model registry managing runnable model packages and individual artifacts.
+    Pure Model Harness Registry.
+    Contains zero hardcoded built-in models.
+    Loads only models explicitly added by the user.
     """
     model_added = Signal(object)
     model_updated = Signal(object)
@@ -150,7 +204,7 @@ class ModelRegistry(QObject):
 
     package_added = Signal(object)       # Emits ModelPackage
     package_removed = Signal(str)        # package_id
-    active_package_changed = Signal(object)  # ModelPackage
+    active_package_changed = Signal(object)  # Optional[ModelPackage]
 
     _instance: Optional["ModelRegistry"] = None
 
@@ -161,7 +215,6 @@ class ModelRegistry(QObject):
         self._active_package_id: str = ""
 
         self._load_from_settings()
-        self._seed_default_packages()
 
     @classmethod
     def get_instance(cls) -> "ModelRegistry":
@@ -184,69 +237,36 @@ class ModelRegistry(QObject):
 
     def _load_from_settings(self):
         s = self._settings()
-        raw_entries = s.value("model_registry/entries", "{}", type=str)
-        try:
-            data = json.loads(raw_entries)
-            for k, d in data.items():
-                self._models[k] = ModelEntry(**d)
-        except Exception:
-            self._models = {}
-
         raw_pkgs = s.value("model_registry/packages", "{}", type=str)
         try:
             pkg_data = json.loads(raw_pkgs)
+            self._packages = {}
             for k, d in pkg_data.items():
-                self._packages[k] = ModelPackage(**d)
+                if k.startswith("default_") or k == "user_signlanguage_ai":
+                    continue
+                # Verify that package folder and files still exist on disk
+                folder = Path(d.get("folder_path", ""))
+                clf = Path(d.get("classifier_path", ""))
+                if folder.exists() and clf.exists():
+                    self._packages[k] = ModelPackage(**d)
         except Exception:
             self._packages = {}
 
         self._active_package_id = s.value("model_registry/active_package_id", "", type=str)
+        if self._active_package_id not in self._packages:
+            self._active_package_id = next(iter(self._packages), "")
 
-    def _seed_default_packages(self):
-        """Seed packages from local workspace and user's training directory if present."""
-        # 1. Local workspace models
-        if ASL_CLASSIFIER_MODEL.exists() and HAND_LANDMARKER_TASK.exists():
-            default_id = "default_asl_classifier"
-            if default_id not in self._packages:
-                pkg = ModelPackage(
-                    id=default_id,
-                    name="Default ASL Classifier (Built-in)",
-                    folder_path=str(ROOT_DIR.resolve()),
-                    classifier_path=str(ASL_CLASSIFIER_MODEL.resolve()),
-                    task_path=str(HAND_LANDMARKER_TASK.resolve()),
-                    predict_script=str((ROOT_DIR / "predict_live.py").resolve()) if (ROOT_DIR / "predict_live.py").exists() else None,
-                    classes=["A", "B", "C", "D", "E", "F", "G", "H", "I", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y"]
-                )
-                self._packages[default_id] = pkg
-                if not self._active_package_id:
-                    self._active_package_id = default_id
-
-        # 2. User's active training workspace in Downloads
-        user_training_dir = Path(r"C:\Users\Rajat\Downloads\SignLanguageAI-20261026T190221Z-1-001\SignLanguageAI")
-        if user_training_dir.exists():
-            detected = detect_model_in_folder(str(user_training_dir))
-            if detected["is_valid"]:
-                user_pkg_id = "user_signlanguage_ai"
-                if user_pkg_id not in self._packages:
-                    user_pkg = ModelPackage(
-                        id=user_pkg_id,
-                        name="SignLanguageAI Active Model",
-                        folder_path=detected["folder_path"],
-                        classifier_path=detected["classifier_path"],
-                        task_path=detected["task_path"],
-                        predict_script=detected["predict_script"],
-                        classes=detected["classes"]
-                    )
-                    self._packages[user_pkg_id] = user_pkg
-                    # Prefer user's custom trained model if present!
-                    self._active_package_id = user_pkg_id
-
+    def clear_all_packages(self):
+        """Purge any saved packages to ensure completely clean harness state."""
+        self._packages.clear()
+        self._active_package_id = ""
         self._save_to_settings()
+        self.active_package_changed.emit(None)
 
     def register_model_package(self, folder_path: str, custom_name: str = "") -> Tuple[bool, Optional[ModelPackage], str]:
         """
         Validate and register a complete model package from a directory.
-        Checks predict_live.py, classifier model, and hand landmarker task.
+        Identifies whether it is a User Model or Developer Model Suite.
         """
         detected = detect_model_in_folder(folder_path)
         if not detected["is_valid"]:
@@ -262,6 +282,8 @@ class ModelRegistry(QObject):
             classifier_path=detected["classifier_path"],
             task_path=detected["task_path"],
             predict_script=detected["predict_script"],
+            is_developer=detected["is_developer"],
+            model_type=detected["model_type"],
             classes=detected["classes"]
         )
 
@@ -271,10 +293,13 @@ class ModelRegistry(QObject):
 
         self.package_added.emit(package)
         self.active_package_changed.emit(package)
-        return True, package, f"Successfully registered '{name}'."
+        return True, package, f"Successfully registered '{name}' ({'Developer Suite' if package.is_developer else 'User Model'})."
 
     def get_all_packages(self) -> List[ModelPackage]:
         return list(self._packages.values())
+
+    def get_packages(self) -> List[ModelPackage]:
+        return self.get_all_packages()
 
     def get_package(self, package_id: str) -> Optional[ModelPackage]:
         return self._packages.get(package_id)
@@ -283,7 +308,6 @@ class ModelRegistry(QObject):
         if self._active_package_id in self._packages:
             return self._packages[self._active_package_id]
         if self._packages:
-            # Pick first available
             first_id = next(iter(self._packages))
             self._active_package_id = first_id
             return self._packages[first_id]
@@ -305,8 +329,7 @@ class ModelRegistry(QObject):
             self._save_to_settings()
             self.package_removed.emit(package_id)
             active = self.get_active_package()
-            if active:
-                self.active_package_changed.emit(active)
+            self.active_package_changed.emit(active)
             return True
         return False
 
