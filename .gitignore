@@ -1,70 +1,52 @@
 # ==============================================================================
 # SignFlow Studio — Git Ignore Configuration
-# Protects security, credentials, build artifacts, and system environments.
+# Open-Source AI Model Harness
 # ==============================================================================
 
-# Python Virtual Environments (Machine-Specific)
+# Python Virtual Environments
 .venv/
+.venv*/
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
+*.venv
 
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized files
 __pycache__/
 *.py[cod]
 *$py.class
 *.pyd
 
-# C extensions
-*.so
+# Datasets and Training CSV Data
+*.csv
+data/
+datasets/
 
-# Environment Variables, Secrets & Configuration Files
-.env
-.env.*
-*.env
-secrets.json
-credentials.json
-*.pem
-*.key
+# AI Model Binaries (Harness loads custom models dynamically via 'Add Model')
+models/*.joblib
+models/*.task
+models/*.onnx
+models/*.pkl
+models/*.h5
+models/*.keras
+models/*.pt
+models/*.pth
+!models/.gitkeep
 
-# PyInstaller / Build Artifacts & Distributions
+# PyInstaller / Build Artifacts
 build/
 dist/
 *.spec.bak
-*.egg-info/
-.eggs/
-eggs/
-parts/
-var/
-sdist/
-develop-eggs/
-.installed.cfg
-*.egg
+test_renders/
 
 # IDE, Editor, and OS Files
 .vscode/
 .idea/
-*.sublime-project
-*.sublime-workspace
 .DS_Store
 Thumbs.db
 desktop.ini
 *.swp
-*.swo
-*~
 *.tmp
 
-# Logs and databases
+# Logs
 *.log
-*.sqlite
-*.sqlite3
-
-# Test artifacts and temporary test data
-data/
-test_renders/
-
-# Tooling and CLI Cache
-.gemini/
-scratch/

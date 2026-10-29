@@ -80,8 +80,11 @@ class StorageDirRow(QFrame):
 class SettingsPage(QWidget):
     """
     Compact, fully functional Settings page with persistent QSettings.
+    Includes Self Train launcher and Virtual Camera broadcast controls.
     """
-    theme_changed = Signal(bool)  # is_dark
+    theme_changed = Signal(bool)           # is_dark
+    self_train_requested = Signal()        # Navigates to training workspace
+    developer_mode_toggled = Signal(bool)  # Shows/hides dev tools in sidebar
 
     def __init__(self, camera_manager: CameraManager, parent=None):
         super().__init__(parent)
@@ -219,44 +222,73 @@ class SettingsPage(QWidget):
         main_layout.addWidget(cam_card)
 
         # =====================================================================
-        # 3. DEFAULT RECOGNITION MODE
+        # 3. SELF TRAIN & DEVELOPER STUDIO
         # =====================================================================
-        mode_card = QFrame()
-        mode_card.setProperty("class", "cardPanel")
-        m_layout = QVBoxLayout(mode_card)
-        m_layout.setContentsMargins(20, 16, 20, 16)
-        m_layout.setSpacing(12)
+        train_card = QFrame()
+        train_card.setProperty("class", "cardPanelElevated")
+        tr_layout = QVBoxLayout(train_card)
+        tr_layout.setContentsMargins(20, 16, 20, 16)
+        tr_layout.setSpacing(12)
 
-        m_title = QLabel("3. DEFAULT RECOGNITION MODE")
-        m_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
-        m_layout.addWidget(m_title)
+        tr_title = QLabel("3. SELF TRAIN & DEVELOPER STUDIO")
+        tr_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
+        tr_layout.addWidget(tr_title)
 
-        m_desc = QLabel("Configure which recognition mode is initially activated upon opening the Predict Live workspace.")
-        m_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary};")
-        m_layout.addWidget(m_desc)
+        tr_desc = QLabel(
+            "Access dataset recording, static sign model training, dynamic sequence gestures, "
+            "and neural network layer visualization. Developer tools are housed here to keep "
+            "the main sign language translation workspace uncluttered."
+        )
+        tr_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
+        tr_desc.setWordWrap(True)
+        tr_layout.addWidget(tr_desc)
 
-        mode_row = QHBoxLayout()
-        mode_row.setSpacing(12)
-        mode_row.addWidget(QLabel("Default Mode:"))
+        tr_actions = QHBoxLayout()
+        tr_actions.setSpacing(14)
 
-        self.mode_combo = QComboBox()
-        self.mode_combo.setMinimumWidth(280)
-        self.mode_combo.addItem(f"{MODE_STATIC} — Single-frame posture landmarks", userData=MODE_STATIC)
-        self.mode_combo.addItem(f"{MODE_DYNAMIC} — Multi-frame temporal sequence trajectories", userData=MODE_DYNAMIC)
-        self.mode_combo.addItem(f"{MODE_COMBINED} — Integrated static & dynamic pipeline", userData=MODE_COMBINED)
+        self.btn_launch_train = QPushButton(" Launch Self Train Workspace")
+        self.btn_launch_train.setProperty("class", "primaryBtn")
+        self.btn_launch_train.setIcon(get_icon("play", "#1C1917" if not palette.is_dark else "#161513", size=15))
+        self.btn_launch_train.clicked.connect(self._on_launch_train_clicked)
+        tr_actions.addWidget(self.btn_launch_train)
 
-        curr_mode = SettingsManager.get_default_mode()
-        for i in range(self.mode_combo.count()):
-            if self.mode_combo.itemData(i) == curr_mode:
-                self.mode_combo.setCurrentIndex(i)
-                break
+        self.check_show_dev = QCheckBox("Show Developer Tools in Sidebar Navigation")
+        self.check_show_dev.setStyleSheet("font-size: 12.5px; font-weight: 500;")
+        self.check_show_dev.toggled.connect(self._on_dev_mode_toggled)
+        tr_actions.addWidget(self.check_show_dev)
+        tr_actions.addStretch()
 
-        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
-        mode_row.addWidget(self.mode_combo, 1)
-        mode_row.addStretch()
+        tr_layout.addLayout(tr_actions)
+        main_layout.addWidget(train_card)
 
-        m_layout.addLayout(mode_row)
-        main_layout.addWidget(mode_card)
+        # =====================================================================
+        # 4. VIRTUAL CAMERA OUTPUT
+        # =====================================================================
+        vcam_card = QFrame()
+        vcam_card.setProperty("class", "cardPanel")
+        vc_layout = QVBoxLayout(vcam_card)
+        vc_layout.setContentsMargins(20, 16, 20, 16)
+        vc_layout.setSpacing(12)
+
+        vc_title = QLabel("4. VIRTUAL CAMERA OUTPUT (DISCORD / ZOOM / TEAMS)")
+        vc_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
+        vc_layout.addWidget(vc_title)
+
+        from app.core.virtual_cam_service import VirtualCameraService
+        vc_desc = QLabel(
+            "SignFlow broadcasts live video with translation subtitle banners directly into "
+            "system virtual webcams (OBS Virtual Camera). Discord and Zoom can select this device."
+        )
+        vc_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary};")
+        vc_desc.setWordWrap(True)
+        vc_layout.addWidget(vc_desc)
+
+        self.vcam_overlay_check = QCheckBox("Burn in translation HUD and subtitles on virtual camera feed")
+        self.vcam_overlay_check.setChecked(True)
+        self.vcam_overlay_check.toggled.connect(lambda val: VirtualCameraService.get_instance().set_overlay_enabled(val))
+        vc_layout.addWidget(self.vcam_overlay_check)
+
+        main_layout.addWidget(vcam_card)
 
         # =====================================================================
         # 4. STORAGE DIRECTORIES
@@ -422,6 +454,13 @@ class SettingsPage(QWidget):
 
         self.camera_pref_combo.setCurrentIndex(sel_idx)
         self.camera_pref_combo.blockSignals(False)
+
+    def _on_launch_train_clicked(self):
+        self.check_show_dev.setChecked(True)
+        self.self_train_requested.emit()
+
+    def _on_dev_mode_toggled(self, checked: bool):
+        self.developer_mode_toggled.emit(checked)
 
     def _on_pref_camera_changed(self, index: int):
         if index >= 0:

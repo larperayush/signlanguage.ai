@@ -74,23 +74,23 @@ class MainWindow(QMainWindow):
         self.stack.setObjectName("pageStack")
 
         # Page instances
-        self.page_overview = OverviewPage(camera_manager=self.camera_manager, parent=self)
         self.page_predict = PredictPage(camera_manager=self.camera_manager, parent=self)
+        self.page_settings = SettingsPage(camera_manager=self.camera_manager, parent=self)
         self.page_static = StaticTrainingPage(camera_manager=self.camera_manager, parent=self)
         self.page_dynamic = DynamicTrainingPage(camera_manager=self.camera_manager, parent=self)
         self.page_dataset_manager = DatasetManagerPage(parent=self)
         self.page_model_manager = ModelManagerPage(parent=self)
-        self.page_settings = SettingsPage(camera_manager=self.camera_manager, parent=self)
         self.page_nn_visualizer = NeuralNetworkPage(parent=self)
+        self.page_overview = OverviewPage(camera_manager=self.camera_manager, parent=self)
 
-        self.stack.addWidget(self.page_overview)         # Index 0
-        self.stack.addWidget(self.page_predict)          # Index 1
-        self.stack.addWidget(self.page_static)           # Index 2
-        self.stack.addWidget(self.page_dynamic)          # Index 3
-        self.stack.addWidget(self.page_dataset_manager)  # Index 4
-        self.stack.addWidget(self.page_model_manager)    # Index 5
-        self.stack.addWidget(self.page_settings)         # Index 6
-        self.stack.addWidget(self.page_nn_visualizer)    # Index 7
+        self.stack.addWidget(self.page_predict)          # Index 0: Live Translation
+        self.stack.addWidget(self.page_settings)         # Index 1: Settings & Self Train
+        self.stack.addWidget(self.page_static)           # Index 2: Static Training
+        self.stack.addWidget(self.page_dynamic)          # Index 3: Dynamic Training
+        self.stack.addWidget(self.page_dataset_manager)  # Index 4: Dataset Manager
+        self.stack.addWidget(self.page_model_manager)    # Index 5: Model Artifacts
+        self.stack.addWidget(self.page_nn_visualizer)    # Index 6: Neural Network Visualizer
+        self.stack.addWidget(self.page_overview)         # Index 7: About the Project
 
         content_vbox.addWidget(self.stack)
         shell_layout.addWidget(content_column, 1)
@@ -98,6 +98,8 @@ class MainWindow(QMainWindow):
         # Connect Navigation Signals
         self.sidebar.navigation_requested.connect(self._navigate_to_page)
         self.page_overview.navigate_to.connect(self._navigate_to_page)
+        self.page_settings.self_train_requested.connect(self._on_self_train_requested)
+        self.page_settings.developer_mode_toggled.connect(self.sidebar.set_developer_mode)
 
         # Connect Theme Signals
         self.top_bar.theme_toggled.connect(self._set_theme)
@@ -106,13 +108,23 @@ class MainWindow(QMainWindow):
         # Connect Camera Manager Status to Sidebar & Topbar
         self.camera_manager.status_changed.connect(self._on_camera_status)
 
-        # Connect Backend Manager Status to Sidebar
-        self.backend_manager = BackendManager.get_instance()
-        self.backend_manager.status_changed.connect(self._on_backend_status)
-        self._on_backend_status(self.backend_manager.status, "active" if self.backend_manager.status == STATUS_CONNECTED else "neutral")
+        # Connect Virtual Camera Status to Sidebar
+        from app.core.virtual_cam_service import VirtualCameraService
+        VirtualCameraService.get_instance().status_changed.connect(self._on_vcam_status)
 
-        # Initial Page
+        # Connect Backend Manager Status
+        self.backend_manager = BackendManager.get_instance()
+
+        # Initial Page: Live Translation
         self._navigate_to_page(0)
+
+    def _on_self_train_requested(self):
+        """Open developer static training workspace from Settings Self Train button."""
+        self.sidebar.set_developer_mode(True)
+        self._navigate_to_page(Sidebar.PAGE_STATIC_TRAINING)
+
+    def _on_vcam_status(self, is_active: bool, msg: str):
+        self.sidebar.update_virtual_cam_status(msg, is_active)
 
     def _navigate_to_page(self, page_index: int):
         prev_index = self.stack.currentIndex()
@@ -129,7 +141,7 @@ class MainWindow(QMainWindow):
             current_page.on_page_activated()
 
         # Safely transfer camera preview ownership to active workspace
-        if page_index == 1 and hasattr(self.page_predict, "video_widget"):
+        if page_index == 0 and hasattr(self.page_predict, "video_widget"):
             self.camera_manager.set_video_widget(self.page_predict.video_widget)
         elif page_index == 2 and hasattr(self.page_static, "video_widget"):
             self.camera_manager.set_video_widget(self.page_static.video_widget)
@@ -137,14 +149,14 @@ class MainWindow(QMainWindow):
             self.camera_manager.set_video_widget(self.page_dynamic.video_widget)
 
         titles = {
-            0: "About the Project",
-            1: "Live ASL Prediction",
+            0: "Live Sign Language Translation",
+            1: "Preferences & Self Train",
             2: "Static Classifier Training",
             3: "Dynamic Sequence Training",
             4: "Local Dataset Manager",
-            5: "Model Artifact Manager",
-            6: "Preferences & Settings",
-            7: "Neural Network Visualizer"
+            5: "Model Artifacts & Harness",
+            6: "Neural Network Visualizer",
+            7: "About the Project"
         }
         self.top_bar.set_page_title(titles.get(page_index, "Studio"))
 

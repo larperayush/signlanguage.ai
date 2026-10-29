@@ -33,7 +33,7 @@ class TopBar(QWidget):
         layout.setSpacing(14)
 
         # Page Breadcrumb / Title
-        self.breadcrumb_root = QLabel("Studio")
+        self.breadcrumb_root = QLabel("SignFlow AI")
         self.breadcrumb_root.setStyleSheet("font-size: 13px; font-weight: 500;")
         
         self.separator = QLabel("/")

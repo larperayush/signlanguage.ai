@@ -5,10 +5,8 @@ sample review buffer, collection guide, train_model.py hyperparameter training,
 progress tracking, and model artifact registration.
 """
 import os
-import csv
 import time
-import uuid
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 import math
 from pathlib import Path
 from PySide6.QtWidgets import (
@@ -18,9 +16,7 @@ from PySide6.QtWidgets import (
     QStackedLayout, QSizePolicy, QApplication, QLineEdit, QPlainTextEdit
 )
 from PySide6.QtCore import Qt, Slot, QEvent
-from PySide6.QtGui import QColor
 
-from app.core.config import STATIC_SIGNS_CSV
 from app.core.theme import ThemeManager
 from app.core.camera_manager import CameraManager, DeviceInfo
 from app.core.interfaces import (
@@ -59,7 +55,6 @@ class StaticTrainingPage(QWidget):
         self._backend_manager = BackendManager.get_instance()
         self._is_collecting = False
         self._session_sample_count = 0
-        self._candidate_buffer: Dict[str, SampleRecord] = {}
 
         palette = ThemeManager.get_palette()
 
@@ -313,12 +308,6 @@ class StaticTrainingPage(QWidget):
         review_actions = QHBoxLayout()
         review_actions.setSpacing(10)
 
-        self.btn_accept_all = QPushButton(" Accept All")
-        self.btn_accept_all.setProperty("class", "primaryBtn")
-        self.btn_accept_all.setIcon(get_icon("check", "#FFFFFF", size=13))
-        self.btn_accept_all.setToolTip("Commit all candidate samples in buffer to the active dataset at once")
-        self.btn_accept_all.clicked.connect(self._accept_all_samples)
-
         self.btn_accept_sample = QPushButton(" Accept Sample")
         self.btn_accept_sample.setProperty("class", "secondaryBtn")
         self.btn_accept_sample.setIcon(get_icon("check", palette.success, size=13))
@@ -329,17 +318,8 @@ class StaticTrainingPage(QWidget):
         self.btn_discard_sample.setIcon(get_icon("trash", palette.danger, size=13))
         self.btn_discard_sample.clicked.connect(self._discard_sample)
 
-        self.btn_discard_all = QPushButton(" Clear Buffer")
-        self.btn_discard_all.setProperty("class", "secondaryBtn")
-        self.btn_discard_all.setIcon(get_icon("trash", palette.text_muted, size=13))
-        self.btn_discard_all.setToolTip("Clear all candidate samples from review buffer")
-        self.btn_discard_all.clicked.connect(self._discard_all_samples)
-
-        review_actions.addWidget(self.btn_accept_all)
-
         review_actions.addWidget(self.btn_accept_sample)
         review_actions.addWidget(self.btn_discard_sample)
-        review_actions.addWidget(self.btn_discard_all)
         review_actions.addStretch()
         collect_layout.addLayout(review_actions)
 
@@ -745,18 +725,6 @@ class StaticTrainingPage(QWidget):
         else:
             rec = None
 
-        if rec is None and features and len(features) == 63:
-            sample_id = f"smp_{uuid.uuid4().hex[:6]}"
-            rec = SampleRecord(
-                id=sample_id,
-                sign_label=sign,
-                timestamp=time.time(),
-                landmarks_count=len(features),
-                is_accepted=False,
-                metadata={"features": list(features)}
-            )
-            self._on_sample_collected(rec)
-
         if rec:
             # Short capture flash visual confirmation on the camera viewport
             self.video_widget.trigger_capture_flash()
@@ -767,313 +735,22 @@ class StaticTrainingPage(QWidget):
             self.video_widget.set_last_capture_info(confirm_msg)
             self.lbl_last_capture.setText(f"Last capture: Sign {sign} ({now_str})")
 
-    def add_candidate_sample(self, sign_label: str, features: List[float]) -> SampleRecord:
-        """
-        Inject a candidate sample into the Candidate Sample Buffer.
-        Allows testing or programmatic sample staging for review & commit.
-        """
-        sign = sign_label.strip().upper()
-        sample_id = f"smp_{uuid.uuid4().hex[:6]}"
-        rec = SampleRecord(
-            id=sample_id,
-            sign_label=sign,
-            timestamp=time.time(),
-            landmarks_count=len(features),
-            is_accepted=False,
-            metadata={"features": list(features)}
-        )
-        if hasattr(self._collection_backend, "_candidate_samples"):
-            self._collection_backend._candidate_samples[sample_id] = {
-                "features": list(features),
-                "label": sign
-            }
-        self._on_sample_collected(rec)
-        return rec
-
     def _accept_sample(self):
-        """
-        Slot connected to the 'Accept Sample' button.
-        Appends the 63 landmark coordinates and target label from the selected
-        Candidate Sample Buffer row to the active dataset CSV file, marks the
-        sample as Accepted, and immediately updates the 'Recorded Samples' counter.
-        """
-        # 1. Determine candidate row to accept
         row = self.sample_table.currentRow()
-        if row < 0 or (self.sample_table.item(row, 3) and self.sample_table.item(row, 3).text() == "Accepted"):
-            # Search for first unaccepted Candidate row
-            found_row = -1
-            for r in range(self.sample_table.rowCount()):
-                status_item = self.sample_table.item(r, 3)
-                if status_item and status_item.text() != "Accepted":
-                    found_row = r
-                    break
-            row = found_row
-
-        if row < 0 or row >= self.sample_table.rowCount():
+        if row < 0 and self.sample_table.rowCount() > 0:
+            row = 0
+        if row >= 0:
+            sample_id = self.sample_table.item(row, 0).text()
+            self._collection_backend.accept_sample(sample_id)
+            self.sample_table.setItem(row, 3, QTableWidgetItem("Accepted"))
+        else:
             QMessageBox.information(self, "Buffer Empty", "No candidate samples currently in review buffer.")
-            return
-
-        sample_id = self.sample_table.item(row, 0).text()
-        sign_label = self.sample_table.item(row, 1).text().strip().upper()
-
-        # 2. Retrieve features (63 coordinates) from candidate buffer or backend
-        features = None
-        if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
-            rec = self._candidate_buffer[sample_id]
-            if rec.metadata and "features" in rec.metadata:
-                features = rec.metadata["features"]
-            if rec.sign_label:
-                sign_label = rec.sign_label.strip().upper()
-
-        if features is None:
-            id_item = self.sample_table.item(row, 0)
-            if id_item:
-                stored = id_item.data(Qt.ItemDataRole.UserRole)
-                if isinstance(stored, SampleRecord) and stored.metadata:
-                    features = stored.metadata.get("features")
-                elif isinstance(stored, dict) and "features" in stored:
-                    features = stored["features"]
-
-        if features is None and hasattr(self._collection_backend, "_candidate_samples"):
-            backend_item = self._collection_backend._candidate_samples.get(sample_id)
-            if isinstance(backend_item, dict):
-                features = backend_item.get("features")
-                sign_label = backend_item.get("label", sign_label)
-            elif isinstance(backend_item, list):
-                features = backend_item
-
-        # 3. Determine active dataset file path
-        active_ds = self._dataset_registry.get_active_static_dataset()
-        if active_ds and active_ds.file_path:
-            csv_path = Path(active_ds.file_path)
-        elif hasattr(self._collection_backend, "dataset_path") and self._collection_backend.dataset_path:
-            csv_path = Path(self._collection_backend.dataset_path)
-        else:
-            csv_path = STATIC_SIGNS_CSV
-
-        # 4. Commit sample to active dataset CSV file
-        saved_successfully = False
-        if features and len(features) == 63:
-            try:
-                csv_path.parent.mkdir(parents=True, exist_ok=True)
-                needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
-                header = ["label"] + [f"feature_{i}" for i in range(63)]
-
-                with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                    writer = csv.writer(f)
-                    if needs_header:
-                        writer.writerow(header)
-                    writer.writerow([sign_label] + list(features))
-
-                saved_successfully = True
-
-                # If backend adapter has candidate, consume it to keep adapter in sync
-                if hasattr(self._collection_backend, "_candidate_samples") and sample_id in self._collection_backend._candidate_samples:
-                    del self._collection_backend._candidate_samples[sample_id]
-                if hasattr(self._collection_backend, "_sample_counts"):
-                    self._collection_backend._sample_counts[sign_label] = self._collection_backend._sample_counts.get(sign_label, 0) + 1
-                    self._collection_backend.count_updated.emit(self._collection_backend._sample_counts[sign_label])
-
-            except Exception as e:
-                QMessageBox.critical(self, "Error Saving Sample", f"Failed to save sample to dataset: {e}")
-                return
-        else:
-            # Fall back to backend delegator if features not present in buffer
-            saved_successfully = self._collection_backend.accept_sample(sample_id)
-
-        if not saved_successfully:
-            QMessageBox.warning(self, "Save Failed", "Could not save candidate sample. Incomplete feature vector.")
-            return
-
-        # 5. Mark table row as accepted
-        status_item = QTableWidgetItem("Accepted")
-        status_item.setForeground(QColor("#10B981"))
-        self.sample_table.setItem(row, 3, status_item)
-
-        # Mark in local buffer
-        if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
-            self._candidate_buffer[sample_id].is_accepted = True
-
-        # 6. Immediately update the 'Recorded Samples' counter
-        total_samples = 0
-        if csv_path.exists():
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    total_samples = max(0, sum(1 for _ in f) - 1)
-            except Exception:
-                total_samples = 0
-
-        self.lbl_ds_samples.setText(f"{total_samples} samples")
-
-        # Update active dataset entry in DatasetRegistry
-        if active_ds:
-            active_ds.row_count = total_samples
-            try:
-                active_ds.file_size_bytes = csv_path.stat().st_size
-            except Exception:
-                pass
-            self._dataset_registry.dataset_updated.emit(active_ds)
-            self._dataset_registry.active_static_changed.emit(active_ds)
-
-    def _accept_all_samples(self):
-        """
-        Slot connected to the 'Accept All' button.
-        Appends all unaccepted candidate samples currently in the Candidate Sample Buffer
-        to the active dataset CSV file in a single batch operation, updates all row
-        statuses to Accepted, and immediately refreshes the 'Recorded Samples' counter.
-        """
-        candidate_rows = []
-        for r in range(self.sample_table.rowCount()):
-            status_item = self.sample_table.item(r, 3)
-            if status_item and status_item.text() != "Accepted":
-                candidate_rows.append(r)
-
-        if not candidate_rows:
-            QMessageBox.information(
-                self,
-                "Buffer Empty",
-                "No unaccepted candidate samples currently in review buffer."
-            )
-            return
-
-        # Resolve active dataset file path
-        active_ds = self._dataset_registry.get_active_static_dataset()
-        if active_ds and active_ds.file_path:
-            csv_path = Path(active_ds.file_path)
-        elif hasattr(self._collection_backend, "dataset_path") and self._collection_backend.dataset_path:
-            csv_path = Path(self._collection_backend.dataset_path)
-        else:
-            csv_path = STATIC_SIGNS_CSV
-
-        csv_path.parent.mkdir(parents=True, exist_ok=True)
-        needs_header = not csv_path.exists() or csv_path.stat().st_size == 0
-        header = ["label"] + [f"feature_{i}" for i in range(63)]
-
-        rows_to_append = []
-        accepted_records = []
-
-        for r in candidate_rows:
-            sample_id = self.sample_table.item(r, 0).text()
-            sign_label = self.sample_table.item(r, 1).text().strip().upper()
-
-            features = None
-            if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
-                rec = self._candidate_buffer[sample_id]
-                if rec.metadata and "features" in rec.metadata:
-                    features = rec.metadata["features"]
-                if rec.sign_label:
-                    sign_label = rec.sign_label.strip().upper()
-
-            if features is None:
-                id_item = self.sample_table.item(r, 0)
-                if id_item:
-                    stored = id_item.data(Qt.ItemDataRole.UserRole)
-                    if isinstance(stored, SampleRecord) and stored.metadata:
-                        features = stored.metadata.get("features")
-                    elif isinstance(stored, dict) and "features" in stored:
-                        features = stored["features"]
-
-            if features is None and hasattr(self._collection_backend, "_candidate_samples"):
-                backend_item = self._collection_backend._candidate_samples.get(sample_id)
-                if isinstance(backend_item, dict):
-                    features = backend_item.get("features")
-                    sign_label = backend_item.get("label", sign_label)
-                elif isinstance(backend_item, list):
-                    features = backend_item
-
-            if features and len(features) == 63:
-                rows_to_append.append([sign_label] + list(features))
-                accepted_records.append((r, sample_id, sign_label))
-
-        if not rows_to_append:
-            QMessageBox.warning(
-                self,
-                "Accept Failed",
-                "None of the candidate samples had valid 63-dimensional coordinate vectors."
-            )
-            return
-
-        # Batch write to active dataset CSV
-        try:
-            with open(csv_path, "a", newline="", encoding="utf-8") as f:
-                writer = csv.writer(f)
-                if needs_header:
-                    writer.writerow(header)
-                writer.writerows(rows_to_append)
-        except Exception as e:
-            QMessageBox.critical(self, "Error Saving Samples", f"Failed to batch commit samples: {e}")
-            return
-
-        # Mark each row in table and local buffer as Accepted
-        for r, sample_id, sign_label in accepted_records:
-            status_item = QTableWidgetItem("Accepted")
-            status_item.setForeground(QColor("#10B981"))
-            self.sample_table.setItem(r, 3, status_item)
-
-            if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
-                self._candidate_buffer[sample_id].is_accepted = True
-
-            if hasattr(self._collection_backend, "_candidate_samples") and sample_id in self._collection_backend._candidate_samples:
-                del self._collection_backend._candidate_samples[sample_id]
-
-            if hasattr(self._collection_backend, "_sample_counts"):
-                self._collection_backend._sample_counts[sign_label] = self._collection_backend._sample_counts.get(sign_label, 0) + 1
-
-        if hasattr(self._collection_backend, "_sample_counts"):
-            curr = getattr(self._collection_backend, "_current_sign", "A")
-            self._collection_backend.count_updated.emit(self._collection_backend._sample_counts.get(curr, 0))
-
-        # Immediately update the 'Recorded Samples' counter
-        total_samples = 0
-        if csv_path.exists():
-            try:
-                with open(csv_path, "r", encoding="utf-8") as f:
-                    total_samples = max(0, sum(1 for _ in f) - 1)
-            except Exception:
-                total_samples = 0
-
-        self.lbl_ds_samples.setText(f"{total_samples} samples")
-
-        # Update active dataset entry in DatasetRegistry
-        if active_ds:
-            active_ds.row_count = total_samples
-            try:
-                active_ds.file_size_bytes = csv_path.stat().st_size
-            except Exception:
-                pass
-            self._dataset_registry.dataset_updated.emit(active_ds)
-            self._dataset_registry.active_static_changed.emit(active_ds)
-
-        # Visual feedback on UI
-        msg_text = f"Accepted all {len(rows_to_append)} samples into dataset."
-        self.video_widget.set_last_capture_info(f"Accepted {len(rows_to_append)} samples")
-        self.lbl_last_capture.setText(msg_text)
-
-    def _discard_all_samples(self):
-        """Discard all candidate samples from the review buffer."""
-        count = self.sample_table.rowCount()
-        if count == 0:
-            return
-
-        for r in range(count):
-            item = self.sample_table.item(r, 0)
-            if item:
-                sample_id = item.text()
-                self._collection_backend.discard_sample(sample_id)
-
-        if hasattr(self, "_candidate_buffer"):
-            self._candidate_buffer.clear()
-
-        self.sample_table.setRowCount(0)
-        self.lbl_last_capture.setText(f"Cleared {count} samples from review buffer.")
 
     def _discard_sample(self):
         row = self.sample_table.currentRow()
         if row >= 0:
             sample_id = self.sample_table.item(row, 0).text()
             self._collection_backend.discard_sample(sample_id)
-            if hasattr(self, "_candidate_buffer") and sample_id in self._candidate_buffer:
-                del self._candidate_buffer[sample_id]
             self.sample_table.removeRow(row)
 
     @Slot(object)
@@ -1081,21 +758,12 @@ class StaticTrainingPage(QWidget):
         self._session_sample_count += 1
         self.lbl_sample_count.setText(f"{self._session_sample_count} recorded")
 
-        if not hasattr(self, "_candidate_buffer"):
-            self._candidate_buffer = {}
-        self._candidate_buffer[sample.id] = sample
-
         row = self.sample_table.rowCount()
         self.sample_table.insertRow(row)
-
-        id_item = QTableWidgetItem(sample.id)
-        id_item.setData(Qt.ItemDataRole.UserRole, sample)
-        self.sample_table.setItem(row, 0, id_item)
-
+        self.sample_table.setItem(row, 0, QTableWidgetItem(sample.id))
         self.sample_table.setItem(row, 1, QTableWidgetItem(sample.sign_label))
         self.sample_table.setItem(row, 2, QTableWidgetItem(f"{sample.landmarks_count} coords"))
         self.sample_table.setItem(row, 3, QTableWidgetItem("Candidate"))
-        self.sample_table.selectRow(row)
         self.sample_table.scrollToBottom()
 
     @Slot(int)

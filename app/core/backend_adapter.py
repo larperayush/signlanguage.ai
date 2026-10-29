@@ -272,6 +272,24 @@ class PythonMLPredictionAdapter(PredictionBackendInterface):
         else:
             self._connected = False
 
+    def load_model_package(self, task_path: str, classifier_path: str) -> bool:
+        """Dynamically switch active classifier and landmark task paths."""
+        was_active = self._is_active
+        if was_active:
+            self.stop_prediction()
+
+        self.model_task_path = str(Path(task_path).resolve())
+        self.classifier_path = str(Path(classifier_path).resolve())
+        self._worker.close()
+        self._worker = PredictionWorker(self.model_task_path, self.classifier_path)
+        self._worker.prediction_ready.connect(self._on_prediction_ready)
+        self._worker.status_msg.connect(self._on_worker_status)
+        self._verify_connection()
+
+        if was_active and self._connected:
+            self.start_prediction(self._mode, "")
+        return self._connected
+
     def is_connected(self) -> bool:
         return self._connected
 
@@ -436,10 +454,7 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
             return None
 
         sample_id = f"smp_{uuid.uuid4().hex[:6]}"
-        self._candidate_samples[sample_id] = {
-            "features": list(features),
-            "label": target_sign
-        }
+        self._candidate_samples[sample_id] = list(features)
 
         record = SampleRecord(
             id=sample_id,
@@ -447,7 +462,7 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
             timestamp=time.time(),
             landmarks_count=len(features),
             is_accepted=False,
-            metadata={"features": list(features)}
+            metadata={"features": features}
         )
         self.sample_collected.emit(record)
         return record
@@ -457,14 +472,7 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
         if sample_id not in self._candidate_samples:
             return False
 
-        item = self._candidate_samples.pop(sample_id)
-        if isinstance(item, dict):
-            features = item["features"]
-            label = item.get("label", self._current_sign)
-        else:
-            features = item
-            label = self._current_sign
-
+        features = self._candidate_samples.pop(sample_id)
         csv_path = Path(self.dataset_path)
 
         # Ensure header if new file
@@ -477,10 +485,10 @@ class PythonMLStaticCollectionAdapter(StaticCollectionInterface):
                 writer = csv.writer(f)
                 if needs_header:
                     writer.writerow(header)
-                writer.writerow([label] + features)
+                writer.writerow([self._current_sign] + features)
 
-            self._sample_counts[label] = self._sample_counts.get(label, 0) + 1
-            self.count_updated.emit(self._sample_counts[label])
+            self._sample_counts[self._current_sign] = self._sample_counts.get(self._current_sign, 0) + 1
+            self.count_updated.emit(self._sample_counts[self._current_sign])
             return True
         except Exception as e:
             self.error_occurred.emit(f"Failed to save sample: {e}")
