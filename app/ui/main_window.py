@@ -103,6 +103,7 @@ class MainWindow(QMainWindow):
 
         # Connect Theme Signals
         self.top_bar.theme_toggled.connect(self._set_theme)
+        self.top_bar.settings_clicked.connect(self._open_settings_dialog)
         self.page_settings.theme_changed.connect(self._set_theme)
 
         # Connect Camera Manager Status to Sidebar & Topbar
@@ -122,6 +123,14 @@ class MainWindow(QMainWindow):
         """Open developer static training workspace from Settings Self Train button."""
         self.sidebar.set_developer_mode(True)
         self._navigate_to_page(Sidebar.PAGE_STATIC_TRAINING)
+
+    def _open_settings_dialog(self):
+        """Open settings & developer tools dialog from TopBar gear button."""
+        from app.ui.components.settings_dialog import SettingsDialog
+        dlg = SettingsDialog(is_developer_mode=self.sidebar.is_developer_mode(), parent=self)
+        dlg.developer_mode_changed.connect(self.sidebar.set_developer_mode)
+        dlg.navigate_requested.connect(self._navigate_to_page)
+        dlg.exec()
 
     def _on_vcam_status(self, is_active: bool, msg: str):
         self.sidebar.update_virtual_cam_status(msg, is_active)

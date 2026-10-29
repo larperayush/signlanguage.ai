@@ -21,12 +21,14 @@ from app.core.config import (
 )
 from app.core.theme import ThemeManager
 from app.core.camera_manager import CameraManager
-from app.core.backend_manager import BackendManager
+from app.core.backend_manager import BackendManager, STATUS_CONNECTED
 from app.core.dataset_registry import DatasetRegistry, MANAGED_DATA_DIR
 from app.core.model_registry import ModelRegistry
 from app.resources.icons import get_icon, get_pixmap
 from app.ui.components.widgets import SectionHeader, StatusPill
 from app.ui.components.backend_import_dialog import BackendImportDialog
+from app.ui.components.connect_apps_dialog import ConnectAppsDialog
+from app.ui.components.settings_dialog import ToggleSwitch
 
 
 class StorageDirRow(QFrame):
@@ -108,58 +110,182 @@ class SettingsPage(QWidget):
 
         # Header
         header = SectionHeader(
-            "Application Settings",
-            "Configure appearance themes, preferred camera hardware, default recognition modes, verified local storage, and system diagnostics."
+            "Application Settings & Tools",
+            "Configure streaming app connections, ML backend linkages, self train developer tools, and appearance."
         )
         main_layout.addWidget(header)
 
         # =====================================================================
-        # 1. APPEARANCE
+        # 1. CONNECT APPLICATIONS (FIRST ITEM)
         # =====================================================================
-        theme_card = QFrame()
-        theme_card.setProperty("class", "cardPanel")
-        th_layout = QVBoxLayout(theme_card)
-        th_layout.setContentsMargins(20, 16, 20, 16)
-        th_layout.setSpacing(12)
+        apps_card = QFrame()
+        apps_card.setProperty("class", "cardPanelElevated")
+        ac_layout = QVBoxLayout(apps_card)
+        ac_layout.setContentsMargins(20, 16, 20, 16)
+        ac_layout.setSpacing(10)
 
-        th_title = QLabel("1. APPEARANCE")
-        th_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
-        th_layout.addWidget(th_title)
+        ac_header = QHBoxLayout()
+        ac_title = QLabel("1. CONNECT APPLICATIONS")
+        ac_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
+        ac_header.addWidget(ac_title)
+        ac_header.addStretch()
 
-        th_desc = QLabel("Select your preferred visual environment. Themes are applied instantly across all application screens.")
-        th_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary};")
-        th_layout.addWidget(th_desc)
+        self.connect_apps_btn = QPushButton(" Connect Apps +")
+        self.connect_apps_btn.setProperty("class", "primaryBtn")
+        self.connect_apps_btn.setIcon(get_icon("apps", "#1C1917" if not palette.is_dark else "#161513", size=15))
+        self.connect_apps_btn.clicked.connect(self._open_connect_apps_dialog)
+        ac_header.addWidget(self.connect_apps_btn)
 
-        th_group = QHBoxLayout()
-        th_group.setSpacing(24)
+        ac_layout.addLayout(ac_header)
 
-        self.btn_group_theme = QButtonGroup(self)
-        self.radio_dark = QRadioButton("Dark Mode (Recommended)")
-        self.radio_light = QRadioButton("Light Mode")
-        self.radio_system = QRadioButton("System Default")
-
-        self.btn_group_theme.addButton(self.radio_dark, 0)
-        self.btn_group_theme.addButton(self.radio_light, 1)
-        self.btn_group_theme.addButton(self.radio_system, 2)
-
-        current_theme = SettingsManager.get_theme()
-        if current_theme == "light":
-            self.radio_light.setChecked(True)
-        else:
-            self.radio_dark.setChecked(True)
-
-        self.btn_group_theme.idClicked.connect(self._on_theme_selected)
-
-        th_group.addWidget(self.radio_dark)
-        th_group.addWidget(self.radio_light)
-        th_group.addWidget(self.radio_system)
-        th_group.addStretch()
-
-        th_layout.addLayout(th_group)
-        main_layout.addWidget(theme_card)
+        ac_desc = QLabel(
+            "Connect SignFlow live translation to video meeting platforms and streaming applications "
+            "like Discord, Zoom, OBS Studio, and Microsoft Teams via Virtual Camera broadcasting."
+        )
+        ac_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
+        ac_desc.setWordWrap(True)
+        ac_layout.addWidget(ac_desc)
+        main_layout.addWidget(apps_card)
 
         # =====================================================================
-        # 2. PREFERRED CAMERA & HARDWARE
+        # 2. BACKEND SETUP (BELOW CONNECT APPS)
+        # =====================================================================
+        backend_card = QFrame()
+        backend_card.setProperty("class", "cardPanel")
+        be_layout = QVBoxLayout(backend_card)
+        be_layout.setContentsMargins(20, 16, 20, 16)
+        be_layout.setSpacing(10)
+
+        be_header = QHBoxLayout()
+        be_title = QLabel("2. BACKEND SETUP")
+        be_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
+
+        is_conn = (self._backend_manager.status == STATUS_CONNECTED)
+        self.be_pill = StatusPill("Connected" if is_conn else "Unlinked", "active" if is_conn else "neutral")
+
+        be_header.addWidget(be_title)
+        be_header.addStretch()
+        be_header.addWidget(self.be_pill)
+        be_layout.addLayout(be_header)
+
+        be_desc = QLabel(
+            "Configure your external Python machine learning project directory, verify detected scripts "
+            "(predict_live.py, train_model.py), and inspect module mappings."
+        )
+        be_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
+        be_desc.setWordWrap(True)
+        be_layout.addWidget(be_desc)
+
+        be_action_row = QHBoxLayout()
+        be_path = self._backend_manager.backend_directory or "No external directory registered"
+        self.lbl_be_path = QLabel(f"Path: {Path(be_path).name if be_path != 'No external directory registered' else be_path}")
+        self.lbl_be_path.setStyleSheet(f"font-size: 11px; color: {palette.text_muted}; font-family: monospace;")
+        be_action_row.addWidget(self.lbl_be_path, 1)
+
+        self.btn_backend_setup = QPushButton(" Backend Setup...")
+        self.btn_backend_setup.setProperty("class", "secondaryBtn")
+        self.btn_backend_setup.setIcon(get_icon("folder", palette.text_secondary, palette.accent, size=14))
+        self.btn_backend_setup.clicked.connect(self._open_backend_config)
+        be_action_row.addWidget(self.btn_backend_setup)
+
+        be_layout.addLayout(be_action_row)
+        main_layout.addWidget(backend_card)
+
+        # =====================================================================
+        # 3. DEVELOPMENT TOOLS BAR & SELF TRAIN SLIDER
+        # =====================================================================
+        dev_bar = QFrame()
+        dev_bar.setStyleSheet(f"""
+            QFrame {{
+                background-color: {palette.bg_sidebar};
+                border-top: 1px solid {palette.border_default};
+                border-bottom: 1px solid {palette.border_default};
+                border-radius: 4px;
+            }}
+        """)
+        dev_bar_layout = QHBoxLayout(dev_bar)
+        dev_bar_layout.setContentsMargins(14, 8, 14, 8)
+        lbl_bar = QLabel("DEVELOPMENT TOOLS")
+        lbl_bar.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {palette.accent_label}; letter-spacing: 0.8px;")
+        dev_bar_layout.addWidget(lbl_bar)
+        dev_bar_layout.addStretch()
+        main_layout.addWidget(dev_bar)
+
+        # Self Train Slider Card
+        train_card = QFrame()
+        train_card.setProperty("class", "cardPanelElevated")
+        tr_layout = QVBoxLayout(train_card)
+        tr_layout.setContentsMargins(20, 16, 20, 16)
+        tr_layout.setSpacing(12)
+
+        slider_row = QHBoxLayout()
+        slider_row.setSpacing(14)
+
+        slider_info = QVBoxLayout()
+        slider_info.setSpacing(3)
+        lbl_train_title = QLabel("Self Train Mode")
+        lbl_train_title.setStyleSheet(f"font-size: 13.5px; font-weight: 700; color: {palette.text_primary};")
+        lbl_train_desc = QLabel(
+            "Toggle this slider to unlock dataset collection, static sign classifier training, "
+            "dynamic sequence gestures (J / Z), and the 3D neural network visualizer."
+        )
+        lbl_train_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.35;")
+        lbl_train_desc.setWordWrap(True)
+        slider_info.addWidget(lbl_train_title)
+        slider_info.addWidget(lbl_train_desc)
+
+        # Self Train Toggle Switch Slider
+        self.slider_self_train = ToggleSwitch(checked=False)
+        self.slider_self_train.toggled.connect(self._on_dev_mode_toggled)
+
+        slider_row.addLayout(slider_info, 1)
+        slider_row.addWidget(self.slider_self_train)
+        tr_layout.addLayout(slider_row)
+
+        # Quick action jump buttons
+        self.dev_tools_box = QFrame()
+        self.dev_tools_box.setStyleSheet(f"""
+            QFrame {{
+                background-color: {palette.accent_subtle};
+                border: 1px solid {palette.accent_border};
+                border-radius: 6px;
+                padding: 10px;
+            }}
+        """)
+        dt_layout = QVBoxLayout(self.dev_tools_box)
+        dt_layout.setContentsMargins(8, 8, 8, 8)
+        dt_layout.setSpacing(8)
+
+        lbl_dt_status = QLabel("✓ Developer Tools Unlocked — Accessible in sidebar navigation or launch directly:")
+        lbl_dt_status.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.text_primary};")
+        dt_layout.addWidget(lbl_dt_status)
+
+        btn_grid = QHBoxLayout()
+        btn_grid.setSpacing(8)
+
+        btn_static = QPushButton("Static Training")
+        btn_static.setProperty("class", "secondaryBtn")
+        btn_static.clicked.connect(self._on_launch_train_clicked)
+
+        btn_dynamic = QPushButton("Dynamic Training")
+        btn_dynamic.setProperty("class", "secondaryBtn")
+        btn_dynamic.clicked.connect(self._on_launch_dynamic_clicked)
+
+        btn_dataset = QPushButton("Dataset Manager")
+        btn_dataset.setProperty("class", "secondaryBtn")
+        btn_dataset.clicked.connect(self._on_launch_dataset_clicked)
+
+        btn_grid.addWidget(btn_static)
+        btn_grid.addWidget(btn_dynamic)
+        btn_grid.addWidget(btn_dataset)
+        dt_layout.addLayout(btn_grid)
+
+        self.dev_tools_box.setVisible(False)
+        tr_layout.addWidget(self.dev_tools_box)
+        main_layout.addWidget(train_card)
+
+        # =====================================================================
+        # 4. PREFERRED CAMERA & HARDWARE
         # =====================================================================
         cam_card = QFrame()
         cam_card.setProperty("class", "cardPanel")
@@ -167,7 +293,7 @@ class SettingsPage(QWidget):
         c_layout.setContentsMargins(20, 16, 20, 16)
         c_layout.setSpacing(12)
 
-        c_title = QLabel("2. PREFERRED CAMERA DEVICE")
+        c_title = QLabel("4. PREFERRED CAMERA DEVICE")
         c_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
         c_layout.addWidget(c_title)
 
@@ -222,44 +348,49 @@ class SettingsPage(QWidget):
         main_layout.addWidget(cam_card)
 
         # =====================================================================
-        # 3. SELF TRAIN & DEVELOPER STUDIO
+        # 5. APPEARANCE
         # =====================================================================
-        train_card = QFrame()
-        train_card.setProperty("class", "cardPanelElevated")
-        tr_layout = QVBoxLayout(train_card)
-        tr_layout.setContentsMargins(20, 16, 20, 16)
-        tr_layout.setSpacing(12)
+        theme_card = QFrame()
+        theme_card.setProperty("class", "cardPanel")
+        th_layout = QVBoxLayout(theme_card)
+        th_layout.setContentsMargins(20, 16, 20, 16)
+        th_layout.setSpacing(12)
 
-        tr_title = QLabel("3. SELF TRAIN & DEVELOPER STUDIO")
-        tr_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
-        tr_layout.addWidget(tr_title)
+        th_title = QLabel("5. APPEARANCE THEME")
+        th_title.setStyleSheet(f"font-size: 11px; font-weight: 700; color: {palette.accent}; letter-spacing: 0.6px;")
+        th_layout.addWidget(th_title)
 
-        tr_desc = QLabel(
-            "Access dataset recording, static sign model training, dynamic sequence gestures, "
-            "and neural network layer visualization. Developer tools are housed here to keep "
-            "the main sign language translation workspace uncluttered."
-        )
-        tr_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
-        tr_desc.setWordWrap(True)
-        tr_layout.addWidget(tr_desc)
+        th_desc = QLabel("Select your preferred visual environment. Themes are applied instantly across all application screens.")
+        th_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary};")
+        th_layout.addWidget(th_desc)
 
-        tr_actions = QHBoxLayout()
-        tr_actions.setSpacing(14)
+        th_group = QHBoxLayout()
+        th_group.setSpacing(24)
 
-        self.btn_launch_train = QPushButton(" Launch Self Train Workspace")
-        self.btn_launch_train.setProperty("class", "primaryBtn")
-        self.btn_launch_train.setIcon(get_icon("play", "#1C1917" if not palette.is_dark else "#161513", size=15))
-        self.btn_launch_train.clicked.connect(self._on_launch_train_clicked)
-        tr_actions.addWidget(self.btn_launch_train)
+        self.btn_group_theme = QButtonGroup(self)
+        self.radio_dark = QRadioButton("Dark Mode (Espresso Charcoal)")
+        self.radio_light = QRadioButton("Light Mode (Warm Cream)")
+        self.radio_system = QRadioButton("System Default")
 
-        self.check_show_dev = QCheckBox("Show Developer Tools in Sidebar Navigation")
-        self.check_show_dev.setStyleSheet("font-size: 12.5px; font-weight: 500;")
-        self.check_show_dev.toggled.connect(self._on_dev_mode_toggled)
-        tr_actions.addWidget(self.check_show_dev)
-        tr_actions.addStretch()
+        self.btn_group_theme.addButton(self.radio_dark, 0)
+        self.btn_group_theme.addButton(self.radio_light, 1)
+        self.btn_group_theme.addButton(self.radio_system, 2)
 
-        tr_layout.addLayout(tr_actions)
-        main_layout.addWidget(train_card)
+        current_theme = SettingsManager.get_theme()
+        if current_theme == "light":
+            self.radio_light.setChecked(True)
+        else:
+            self.radio_dark.setChecked(True)
+
+        self.btn_group_theme.idClicked.connect(self._on_theme_selected)
+
+        th_group.addWidget(self.radio_dark)
+        th_group.addWidget(self.radio_light)
+        th_group.addWidget(self.radio_system)
+        th_group.addStretch()
+
+        th_layout.addLayout(th_group)
+        main_layout.addWidget(theme_card)
 
         # =====================================================================
         # 4. VIRTUAL CAMERA OUTPUT
@@ -455,11 +586,28 @@ class SettingsPage(QWidget):
         self.camera_pref_combo.setCurrentIndex(sel_idx)
         self.camera_pref_combo.blockSignals(False)
 
+    def _open_connect_apps_dialog(self):
+        dlg = ConnectAppsDialog(self.window())
+        dlg.exec()
+
     def _on_launch_train_clicked(self):
-        self.check_show_dev.setChecked(True)
+        self.slider_self_train.setChecked(True)
         self.self_train_requested.emit()
 
+    def _on_launch_dynamic_clicked(self):
+        self.slider_self_train.setChecked(True)
+        win = self.window()
+        if hasattr(win, "_navigate_to_page"):
+            win._navigate_to_page(3)
+
+    def _on_launch_dataset_clicked(self):
+        self.slider_self_train.setChecked(True)
+        win = self.window()
+        if hasattr(win, "_navigate_to_page"):
+            win._navigate_to_page(4)
+
     def _on_dev_mode_toggled(self, checked: bool):
+        self.dev_tools_box.setVisible(checked)
         self.developer_mode_toggled.emit(checked)
 
     def _on_pref_camera_changed(self, index: int):
@@ -506,12 +654,18 @@ class SettingsPage(QWidget):
         dlg = BackendImportDialog(self.window())
         dlg.exec()
         be_dir = self._backend_manager.backend_directory or "None Registered"
-        self.row_backend.path_lbl.setText(be_dir)
-        exists = os.path.exists(be_dir) if be_dir != "None Registered" else False
-        self.row_backend.pill.set_status(
-            "Verified on Disk" if exists else ("Unlinked" if be_dir == "None Registered" else "Missing on Disk"),
-            "active" if exists else ("neutral" if be_dir == "None Registered" else "error")
-        )
+        if hasattr(self, "lbl_be_path"):
+            self.lbl_be_path.setText(f"Path: {Path(be_dir).name if be_dir != 'None Registered' else be_dir}")
+        if hasattr(self, "be_pill"):
+            is_conn = (self._backend_manager.status == STATUS_CONNECTED)
+            self.be_pill.set_status("Connected" if is_conn else "Unlinked", "active" if is_conn else "neutral")
+        if hasattr(self, "row_backend"):
+            self.row_backend.path_lbl.setText(be_dir)
+            exists = os.path.exists(be_dir) if be_dir != "None Registered" else False
+            self.row_backend.pill.set_status(
+                "Verified on Disk" if exists else ("Unlinked" if be_dir == "None Registered" else "Missing on Disk"),
+                "active" if exists else ("neutral" if be_dir == "None Registered" else "error")
+            )
 
     def _reset_defaults(self):
         res = QMessageBox.question(
