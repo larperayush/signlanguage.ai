@@ -11,7 +11,7 @@ Built with **Python 3**, **PySide6 (Qt for Python)**, **OpenCV**, and **MediaPip
 - **Open-Source Model Harness**:
   - Acts as an agnostic desktop harness for AI models trained by developers and researchers.
   - Model weights and datasets are decoupled from the application repository.
-  - **`+ Add Model` Smart Importer**: Point the app to any model directory (e.g., your training repository), and SignFlow automatically verifies the presence of `predict_live.py`, `asl_classifier.joblib`, and `hand_landmarker.task`, lets you name the model, and adds it to your active model switcher.
+  - **`+ Add Model` Cloud Models Hub & Importer**: Download official pre-trained models directly from GitHub with 1 click (`SignFlow-model-v1 (USER)` or `SignFlow-model-v1 (DEV)`), or import any custom local model package folder from your PC.
   - Switch between multiple models on-the-fly.
 
 - **Virtual Camera Output (Discord, Zoom, Google Meet, Teams)**:
@@ -94,8 +94,8 @@ Double-click `run.bat` or run via terminal:
 python run_app.py
 ```
 
-### 3. Adding Your Model
+### 3. Adding & Downloading Models
 1. Click **+ Add Model** in the top menu bar.
-2. Browse to your model folder (e.g. your training repository containing `asl_classifier.joblib`, `hand_landmarker.task`, and `predict_live.py`).
-3. Enter a custom name and click **Import & Register Model**.
+2. **Download from GitHub**: Select **SignFlow-model-v1 (USER)** or **SignFlow-model-v1 (DEV)** from the cloud models tab and click **Download & Install** to fetch, unpack, and activate the model with 1 click!
+3. **Or Import Local Folder**: Switch to the **Local Model Folder** tab, browse to any custom model folder on your PC, and click **Import & Register Model**.
 4. Select your camera, hit **Start Translation**, and choose **OBS Virtual Camera** in Discord, Zoom, or Teams!
