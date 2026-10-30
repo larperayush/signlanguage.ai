@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget, QProgressBar, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QThread, QUrl
-from PySide6.QtGui import QDesktopServices, QPixmap, QPainter, QPainterPath
+from PySide6.QtGui import QDesktopServices, QPixmap, QPainter, QPainterPath, QColor, QPen
 
 from app.core.config import MODELS_DIR
 from app.core.theme import ThemeManager
@@ -388,27 +388,47 @@ class AddModelDialog(QDialog):
         cs_layout.setContentsMargins(6, 4, 6, 4)
         cs_layout.setSpacing(10)
 
-        # Profile avatar
+        # Profile avatar (High-DPI circular rendering with inset so edges are never clipped)
         avatar_lbl = QLabel()
-        avatar_lbl.setFixedSize(30, 30)
+        avatar_lbl.setFixedSize(36, 36)
+        avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / author_avatar_filename
         if avatar_path.exists():
             src_pix = QPixmap(str(avatar_path))
             if not src_pix.isNull():
-                size = 30
-                out = QPixmap(size, size)
+                size = 34
+                scale = 2
+                c_size = size * scale
+                out = QPixmap(c_size, c_size)
                 out.fill(Qt.GlobalColor.transparent)
+
                 p = QPainter(out)
                 p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
                 p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+                # Inset by 2px (scaled) so round edge is never clipped by bounds
+                inset = 2
                 path = QPainterPath()
-                path.addEllipse(0, 0, size, size)
+                path.addEllipse(inset, inset, c_size - (2 * inset), c_size - (2 * inset))
                 p.setClipPath(path)
-                p.drawPixmap(
-                    0, 0, size, size,
-                    src_pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+
+                scaled = src_pix.scaled(
+                    c_size, c_size,
+                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                    Qt.TransformationMode.SmoothTransformation
                 )
+                ox = (c_size - scaled.width()) // 2
+                oy = (c_size - scaled.height()) // 2
+                p.drawPixmap(ox, oy, scaled)
+
+                # Draw smooth circular border ring
+                p.setClipping(False)
+                ring_color = QColor(245, 180, 25, 180) if is_official else QColor(160, 160, 160, 120)
+                p.setPen(QPen(ring_color, 1.5 * scale))
+                p.drawEllipse(inset, inset, c_size - (2 * inset), c_size - (2 * inset))
                 p.end()
+
+                out.setDevicePixelRatio(scale)
                 avatar_lbl.setPixmap(out)
 
         author_info = QHBoxLayout()
