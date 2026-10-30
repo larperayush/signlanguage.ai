@@ -28,7 +28,6 @@ from app.core.camera_manager import CameraManager
 from app.core.model_registry import ModelRegistry, ModelPackage
 from app.core.native_inference_engine import NativeInferenceWorker
 from app.resources.icons import get_icon, get_pixmap
-from app.ui.components.widgets import StatusPill
 from app.ui.components.add_model_dialog import AddModelDialog
 from app.ui.components.camera_settings_dialog import CameraSettingsDialog
 from app.ui.components.camera_preview_widget import CameraPreviewWidget
@@ -121,10 +120,6 @@ class PredictPage(QWidget):
         top_layout.addLayout(cam_vbox)
 
         top_layout.addStretch()
-
-        # Engine Status Pill
-        self.status_pill = StatusPill("No Model Loaded", "neutral")
-        top_layout.addWidget(self.status_pill)
 
         # Primary Action Button: Start / Stop Translation
         btn_text_color = "#1C1917" if not palette.is_dark else "#161513"
@@ -267,7 +262,6 @@ class PredictPage(QWidget):
         if not packages:
             self.model_combo.addItem("No models detected — Click + Add Model", userData="")
             self.action_btn.setEnabled(False)
-            self.status_pill.set_status("No Models Detected", "neutral")
             self.central_stack_layout.setCurrentWidget(self.empty_state_box)
             self.model_combo.blockSignals(False)
             return
@@ -283,9 +277,6 @@ class PredictPage(QWidget):
         self.action_btn.setEnabled(True)
         self.central_stack_layout.setCurrentWidget(self.live_container)
         self.model_combo.blockSignals(False)
-
-        if not self._is_translating:
-            self.status_pill.set_status("Native Engine Ready", "active")
 
     def get_selected_package(self) -> Optional[ModelPackage]:
         pkg_id = self.model_combo.currentData()
@@ -321,8 +312,6 @@ class PredictPage(QWidget):
                 break
 
         self.central_stack_layout.setCurrentWidget(self.live_container)
-        if not self._is_translating:
-            self.status_pill.set_status("Native Engine Ready", "active")
 
     def _open_add_model_dialog(self):
         dlg = AddModelDialog(self)
@@ -389,7 +378,6 @@ class PredictPage(QWidget):
         self.action_btn.setText(" Stop Translation")
         self.action_btn.setProperty("class", "dangerBtn")
         self.action_btn.setIcon(get_icon("stop", "#FFFFFF", size=15))
-        self.status_pill.set_status("Translating (60 FPS)", "active")
         self._apply_button_style()
 
         # Canvas grabs focus so SPACE and BACKSPACE work immediately
@@ -409,7 +397,6 @@ class PredictPage(QWidget):
         self.action_btn.setText(" Start Translation")
         self.action_btn.setProperty("class", "primaryBtn")
         self.action_btn.setIcon(get_icon("play", btn_text_color, size=15))
-        self.status_pill.set_status("Native Engine Ready", "active" if self._model_registry.get_all_packages() else "neutral")
         self._apply_button_style()
 
     @Slot(str)
@@ -448,10 +435,9 @@ class PredictPage(QWidget):
         text = self.sentence_display.text()
         if text and text != "—":
             clipboard.setText(text)
-            self.status_pill.set_status("Sentence Copied!", "active")
-            QTimer.singleShot(2000, lambda: self.status_pill.set_status(
-                "Translating (60 FPS)" if self._is_translating else "Native Engine Ready", "active"
-            ))
+            orig_text = self.btn_copy.text()
+            self.btn_copy.setText(" ✓ Copied!")
+            QTimer.singleShot(1500, lambda: self.btn_copy.setText(orig_text))
 
     def _apply_button_style(self):
         self.action_btn.style().unpolish(self.action_btn)
