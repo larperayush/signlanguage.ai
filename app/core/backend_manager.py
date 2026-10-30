@@ -74,11 +74,12 @@ class BackendManager(QObject):
         }
         self._load_from_settings()
 
-        # Seed with workspace root if present and not yet registered
-        if not self._backend_dir and (ROOT_DIR / "train_model.py").exists():
-            self.register_backend_directory(str(ROOT_DIR.resolve()))
-        elif self._backend_dir:
+        # Pure harness: only connect if a valid external backend directory exists
+        if self._backend_dir and Path(self._backend_dir).exists():
             self.validate_and_connect()
+        else:
+            self._backend_dir = None
+            self._status = STATUS_NO_BACKEND
 
     @classmethod
     def get_instance(cls) -> "BackendManager":
@@ -99,6 +100,8 @@ class BackendManager(QObject):
     def _load_from_settings(self):
         s = self._settings()
         self._backend_dir = s.value("backend_manager/backend_dir", "", type=str) or None
+        if self._backend_dir and Path(self._backend_dir).resolve() == ROOT_DIR.resolve():
+            self._backend_dir = None
         self._status = s.value("backend_manager/status", STATUS_NO_BACKEND, type=str)
         raw_map = s.value("backend_manager/mappings", "{}", type=str)
         try:
@@ -106,7 +109,7 @@ class BackendManager(QObject):
             self._module_mappings.update(loaded)
         except Exception:
             pass
-        if self._backend_dir:
+        if self._backend_dir and Path(self._backend_dir).exists():
             self.scan_directory(self._backend_dir)
             self._clean_and_correct_mappings()
             self._save_to_settings()

@@ -349,6 +349,10 @@ class PredictPage(QWidget):
             return
 
         try:
+            # Stop any camera preview inside Qt to guarantee exclusive, zero-lag camera access
+            if self._camera_manager and self._camera_manager.is_previewing:
+                self._camera_manager.stop_preview()
+
             # Launch native predict_live.py process directly in its own directory
             # Full 60 FPS, green landmark skeleton (0, 255, 0), red dots, native HUD, zero lag
             self._proc = subprocess.Popen(

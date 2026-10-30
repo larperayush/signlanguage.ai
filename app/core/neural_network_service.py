@@ -135,16 +135,8 @@ class NeuralNetworkService(QObject):
         return compatible
 
     def _ensure_default_models(self):
-        """Ensure genuine feedforward neural network models exist in models/."""
+        """Pure harness: do not seed or generate default models in models/."""
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
-        dense_path = MODELS_DIR / "asl_neural_net_dense.joblib"
-        compact_path = MODELS_DIR / "asl_neural_net_compact.joblib"
-        dataset_path = ROOT_DIR / "static_signs.csv"
-
-        if (not dense_path.exists() or not compact_path.exists()) and dataset_path.exists():
-            self._train_default_models(dataset_path)
-
-        # Load first available model by default
         available = self.list_compatible_models()
         if available:
             self.load_model(available[0]["file_path"])
@@ -485,11 +477,21 @@ class NeuralNetworkService(QObject):
 
     def load_dataset_sample(self, target_sign: str = "A") -> Optional[Tuple[List[float], str]]:
         """
-        Load an authentic 63-feature coordinate vector from static_signs.csv
+        Load an authentic 63-feature coordinate vector from active package static_signs.csv
         corresponding to the specified sign.
         """
-        csv_path = ROOT_DIR / "static_signs.csv"
-        if not csv_path.exists():
+        csv_path = None
+        try:
+            from app.core.model_registry import ModelRegistry
+            active_pkg = ModelRegistry.get_instance().get_active_package()
+            if active_pkg:
+                cand = Path(active_pkg.folder_path) / "static_signs.csv"
+                if cand.exists():
+                    csv_path = cand
+        except Exception:
+            pass
+
+        if not csv_path or not csv_path.exists():
             return None
 
         import csv
