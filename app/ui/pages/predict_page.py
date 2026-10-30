@@ -29,7 +29,7 @@ from app.core.camera_manager import CameraManager
 from app.core.model_registry import ModelRegistry, ModelPackage
 from app.core.native_inference_engine import NativeInferenceWorker
 from app.resources.icons import get_icon, get_pixmap
-from app.ui.components.add_model_dialog import AddModelDialog, make_circular_avatar
+from app.ui.components.add_model_dialog import AddModelDialog
 from app.ui.components.camera_settings_dialog import CameraSettingsDialog
 from app.ui.components.camera_preview_widget import CameraPreviewWidget
 from app.ui.components.embedded_camera_canvas import EmbeddedCameraCanvas
@@ -107,15 +107,7 @@ class PredictPage(QWidget):
         self.delete_model_btn.setToolTip("Delete or unregister the currently selected model")
         self.delete_model_btn.clicked.connect(self._delete_selected_model)
 
-        # Creator circular avatar badge in the top model bar
-        self.creator_avatar_lbl = QLabel()
-        self.creator_avatar_lbl.setFixedSize(32, 32)
-        self.creator_avatar_lbl.setStyleSheet("background: transparent; border: none; border-radius: 16px;")
-        self.creator_avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.creator_avatar_lbl.setVisible(False)
-
         model_hrow.addWidget(self.model_combo)
-        model_hrow.addWidget(self.creator_avatar_lbl)
         model_hrow.addWidget(self.add_model_btn)
         model_hrow.addWidget(self.delete_model_btn)
         model_vbox.addWidget(lbl_model)
@@ -295,19 +287,6 @@ class PredictPage(QWidget):
         self.model_combo.setCurrentIndex(active_idx)
         self.action_btn.setEnabled(True)
         self.delete_model_btn.setEnabled(True)
-
-        if active and ("signflow" in active.name.lower() or "rajatcoder132" in active.folder_path.lower() or "SignFlow" in active.folder_path):
-            avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / "author_avatar.png"
-            pix = make_circular_avatar(avatar_path, diameter=32, is_official=True)
-            if not pix.isNull():
-                self.creator_avatar_lbl.setPixmap(pix)
-                self.creator_avatar_lbl.setToolTip("Official Model by Rajat (@rajatcoder132)")
-                self.creator_avatar_lbl.setVisible(True)
-            else:
-                self.creator_avatar_lbl.setVisible(False)
-        else:
-            self.creator_avatar_lbl.setVisible(False)
-
         self.central_stack_layout.setCurrentWidget(self.live_container)
         self.model_combo.blockSignals(False)
 

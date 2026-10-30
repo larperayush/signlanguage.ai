@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget, QProgressBar, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QThread, QUrl
-from PySide6.QtGui import QDesktopServices, QPixmap, QPainter, QPainterPath, QColor, QPen
+from PySide6.QtGui import QDesktopServices, QPixmap, QImage, QPainter, QPainterPath, QColor, QPen
 
 from app.core.config import MODELS_DIR
 from app.core.theme import ThemeManager
@@ -30,51 +30,106 @@ from app.core.model_registry import ModelRegistry, detect_model_in_folder, Model
 from app.resources.icons import get_icon
 
 
+class CircularAvatar(QWidget):
+    """Guaranteed true circular avatar widget with antialiasing and an accent ring."""
+    def __init__(self, image_path: Path, diameter: int = 38, is_official: bool = True, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(diameter, diameter)
+        self.image_path = image_path
+        self.is_official = is_official
+        self._pixmap = QPixmap(str(image_path)) if image_path.exists() else QPixmap()
+
+    def paintEvent(self, event):
+        if self._pixmap.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+        pen_width = 2.0
+        d = min(self.width(), self.height())
+        r = d - pen_width * 2
+        inset = pen_width
+
+        clip_path = QPainterPath()
+        clip_path.addEllipse(inset, inset, r, r)
+        painter.setClipPath(clip_path)
+
+        min_dim = min(self._pixmap.width(), self._pixmap.height())
+        cropped = self._pixmap.copy(
+            (self._pixmap.width() - min_dim) // 2,
+            (self._pixmap.height() - min_dim) // 2,
+            min_dim,
+            min_dim
+        )
+        scaled = cropped.scaled(
+            int(r), int(r),
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation
+        )
+        x = int(inset + (r - scaled.width()) / 2)
+        y = int(inset + (r - scaled.height()) / 2)
+        painter.drawPixmap(x, y, scaled)
+
+        painter.setClipping(False)
+        ring_color = QColor("#F5B419") if self.is_official else QColor("#A0A0A0")
+        painter.setPen(QPen(ring_color, pen_width))
+        painter.drawEllipse(inset, inset, r, r)
+        painter.end()
+
+
 def make_circular_avatar(image_path: Path, diameter: int = 36, is_official: bool = True) -> QPixmap:
-    """Create a guaranteed, mathematically perfect anti-aliased circular avatar with a subtle ring."""
+    """Create a clean, anti-aliased circular avatar directly using QImage alpha rasterization."""
     if not image_path.exists():
         return QPixmap()
-
     src = QPixmap(str(image_path))
     if src.isNull():
         return QPixmap()
 
-    scale = 2  # 2x for High-DPI sharpness
-    canvas_size = diameter * scale
+    scale = 2
+    size = diameter * scale
 
+    # Center-crop source to 1:1 square
     min_dim = min(src.width(), src.height())
-    sx = (src.width() - min_dim) // 2
-    sy = (src.height() - min_dim) // 2
-    cropped = src.copy(sx, sy, min_dim, min_dim)
+    cropped = src.copy(
+        (src.width() - min_dim) // 2,
+        (src.height() - min_dim) // 2,
+        min_dim,
+        min_dim
+    )
     scaled = cropped.scaled(
-        canvas_size, canvas_size,
+        size, size,
         Qt.AspectRatioMode.IgnoreAspectRatio,
         Qt.TransformationMode.SmoothTransformation
     )
 
-    out = QPixmap(canvas_size, canvas_size)
-    out.fill(Qt.GlobalColor.transparent)
+    # Render on ARGB32 QImage for guaranteed software alpha masking
+    out_img = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
+    out_img.fill(Qt.GlobalColor.transparent)
 
-    p = QPainter(out)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+    painter = QPainter(out_img)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-    inset = 2 * scale
-    draw_size = canvas_size - (2 * inset)
+    inset = 1.5 * scale
+    radius = size - (2 * inset)
 
+    # Circular clip path
     path = QPainterPath()
-    path.addEllipse(inset, inset, draw_size, draw_size)
-    p.setClipPath(path)
-    p.drawPixmap(0, 0, scaled)
+    path.addEllipse(inset, inset, radius, radius)
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, scaled)
 
-    p.setClipping(False)
-    ring_color = QColor(245, 180, 25, 220) if is_official else QColor(160, 160, 160, 140)
-    p.setPen(QPen(ring_color, 1.5 * scale))
-    p.drawEllipse(inset, inset, draw_size, draw_size)
-    p.end()
+    # Circular accent ring
+    painter.setClipping(False)
+    ring_color = QColor("#F5B419") if is_official else QColor("#A0A0A0")
+    painter.setPen(QPen(ring_color, 1.5 * scale))
+    painter.drawEllipse(inset, inset, radius, radius)
+    painter.end()
 
-    out.setDevicePixelRatio(scale)
-    return out
+    pix = QPixmap.fromImage(out_img)
+    pix.setDevicePixelRatio(scale)
+    return pix
 
 
 class GitHubModelDownloader(QThread):
@@ -435,15 +490,9 @@ class AddModelDialog(QDialog):
         cs_layout.setContentsMargins(6, 4, 6, 4)
         cs_layout.setSpacing(10)
 
-        # Profile avatar (Guaranteed pure circle with smooth ring and 18px radius)
-        avatar_lbl = QLabel()
-        avatar_lbl.setFixedSize(36, 36)
-        avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar_lbl.setStyleSheet("background: transparent; border: none; border-radius: 18px;")
+        # Profile avatar (Guaranteed pure circle with smooth ring)
         avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / author_avatar_filename
-        avatar_pix = make_circular_avatar(avatar_path, diameter=36, is_official=is_official)
-        if not avatar_pix.isNull():
-            avatar_lbl.setPixmap(avatar_pix)
+        avatar_widget = CircularAvatar(avatar_path, diameter=38, is_official=is_official)
 
         author_info = QHBoxLayout()
         author_info.setSpacing(6)
@@ -477,7 +526,7 @@ class AddModelDialog(QDialog):
         btn_creator_gh.setIcon(get_icon("link", palette.text_secondary, palette.accent, size=11))
         btn_creator_gh.clicked.connect(lambda checked=False, url=author_url: QDesktopServices.openUrl(QUrl(url)))
 
-        cs_layout.addWidget(avatar_lbl)
+        cs_layout.addWidget(avatar_widget)
         cs_layout.addLayout(author_info, 1)
         cs_layout.addWidget(btn_creator_gh)
         c_layout.addWidget(creator_strip)
