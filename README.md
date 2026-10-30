@@ -18,11 +18,6 @@ Built with **Python 3**, **PySide6 (Qt for Python)**, **OpenCV**, and **MediaPip
   - Broadcasts live webcam video with real-time sign language captions burned directly onto the video feed via `pyvirtualcam` (OBS Virtual Camera).
   - Anyone in your Discord voice channel, Zoom call, or meeting can see your live sign language translated into subtitles right on your video stream.
 
-- **Tactile Editorial Aesthetic**:
-  - **Light Mode**: Warm Cream & Alabaster (`#FAF7F0`), Soft Butter Yellow (`#FEF6D8` bordered in `#F3D580`), Warm Oat (`#F3EEE4`), Deep Espresso Charcoal typography (`#1C1917`), and Warm Gold accents (`#F5B419`).
-  - **Dark Mode**: Deep Warm Charcoal canvas (`#161513`), Warm Dark Slate cards (`#262320`), Espresso surface (`#1E1C19`), and Amber Gold accents (`#F5B419` / `#FCD34D`).
-  - Avoids harsh pure whites, cold corporate grays, and generic neon purple/blue accents.
-
 - **Streamlined Workflow**:
   - **Main Landing**: Greeted with a top menu bar to select your active model, pick your camera device, view a live preview, and start translation with one click.
   - **Self Train & Developer Studio**: Training tools, dynamic gesture trajectory recorders, dataset managers, and neural network visualizers are cleanly organized under the **Self Train** section in Settings to keep the primary translation interface focused and minimal.
