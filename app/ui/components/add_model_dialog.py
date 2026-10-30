@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
     QWidget, QProgressBar, QScrollArea
 )
 from PySide6.QtCore import Qt, Signal, QThread, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QPixmap, QPainter, QPainterPath
 
 from app.core.config import MODELS_DIR
 from app.core.theme import ThemeManager
@@ -123,16 +123,19 @@ class AddModelDialog(QDialog):
     """Editorial dialog for discovering, downloading, and adding SignFlow AI models."""
     model_imported = Signal(object)  # Emits ModelPackage
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_tab: int = 0):
         super().__init__(parent)
         self.setWindowTitle("SignFlow AI Models Hub")
-        self.setMinimumWidth(680)
-        self.setMinimumHeight(520)
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(600)
         self.setModal(True)
 
         self._active_downloader: Optional[GitHubModelDownloader] = None
         self._detected_data = None
         self._setup_ui()
+
+        if initial_tab > 0 and initial_tab < self.tabs.count():
+            self.tabs.setCurrentIndex(initial_tab)
 
     def _setup_ui(self):
         palette = ThemeManager.get_palette()
@@ -146,14 +149,18 @@ class AddModelDialog(QDialog):
         title = QLabel("AI Model Harness Hub")
         title.setStyleSheet(f"font-size: 18px; font-weight: 700; color: {palette.text_primary};")
         desc = QLabel(
-            "Download official cloud-hosted SignFlow models directly from GitHub or import "
-            "any local model package folder from your computer."
+            "Download official cloud-hosted SignFlow models directly from GitHub, import "
+            "any local model package folder from your computer, or manage your installed models."
         )
         desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.4;")
         desc.setWordWrap(True)
         header_vbox.addWidget(title)
         header_vbox.addWidget(desc)
         main_layout.addLayout(header_vbox)
+
+        # Creator Profile Banner (Rajat / rajatcoder132)
+        creator_banner = self._create_creator_banner()
+        main_layout.addWidget(creator_banner)
 
         # Main Tabs
         self.tabs = QTabWidget()
@@ -194,6 +201,10 @@ class AddModelDialog(QDialog):
         local_tab = self._create_local_import_tab()
         self.tabs.addTab(local_tab, "Local Model Folder")
 
+        # Tab 3: Installed Models (Manage & Delete)
+        installed_tab = self._create_installed_tab()
+        self.tabs.addTab(installed_tab, "Installed Models")
+
         main_layout.addWidget(self.tabs, 1)
 
         # Bottom Close Button
@@ -204,6 +215,81 @@ class AddModelDialog(QDialog):
         self.close_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.close_btn)
         main_layout.addLayout(btn_row)
+
+    def _create_creator_banner(self) -> QWidget:
+        palette = ThemeManager.get_palette()
+        banner = QFrame()
+        banner.setProperty("class", "cardPanelElevated")
+        b_layout = QHBoxLayout(banner)
+        b_layout.setContentsMargins(14, 10, 14, 10)
+        b_layout.setSpacing(14)
+
+        # Profile avatar
+        avatar_lbl = QLabel()
+        avatar_lbl.setFixedSize(48, 48)
+        avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / "author_avatar.png"
+        if avatar_path.exists():
+            src_pix = QPixmap(str(avatar_path))
+            if not src_pix.isNull():
+                size = 48
+                out = QPixmap(size, size)
+                out.fill(Qt.GlobalColor.transparent)
+                painter = QPainter(out)
+                painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                path = QPainterPath()
+                path.addEllipse(0, 0, size, size)
+                painter.setClipPath(path)
+                painter.drawPixmap(
+                    0, 0, size, size,
+                    src_pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                )
+                painter.end()
+                avatar_lbl.setPixmap(out)
+
+        info_vbox = QVBoxLayout()
+        info_vbox.setSpacing(3)
+
+        name_row = QHBoxLayout()
+        name_row.setSpacing(8)
+
+        name_lbl = QLabel("Rajat")
+        name_lbl.setStyleSheet(f"font-size: 14.5px; font-weight: 800; color: {palette.text_primary};")
+
+        handle_lbl = QLabel("@rajatcoder132")
+        handle_lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {palette.accent_label};")
+
+        badge_author = QLabel("REPOSITORY CREATOR")
+        badge_author.setStyleSheet(f"""
+            font-size: 9px;
+            font-weight: 800;
+            padding: 2px 7px;
+            border-radius: 4px;
+            background-color: {palette.bg_sidebar};
+            color: {palette.success};
+            border: 1px solid {palette.border_subtle};
+        """)
+
+        name_row.addWidget(name_lbl)
+        name_row.addWidget(handle_lbl)
+        name_row.addWidget(badge_author)
+        name_row.addStretch()
+
+        desc_lbl = QLabel("Creator & Maintainer of official SignFlow AI models repository on GitHub.")
+        desc_lbl.setStyleSheet(f"font-size: 11px; color: {palette.text_secondary};")
+
+        info_vbox.addLayout(name_row)
+        info_vbox.addWidget(desc_lbl)
+
+        btn_gh = QPushButton(" View GitHub Profile")
+        btn_gh.setProperty("class", "secondaryBtn")
+        btn_gh.setIcon(get_icon("link", palette.text_secondary, palette.accent, size=13))
+        btn_gh.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/rajatcoder132")))
+
+        b_layout.addWidget(avatar_lbl)
+        b_layout.addLayout(info_vbox, 1)
+        b_layout.addWidget(btn_gh)
+        return banner
 
     # -------------------------------------------------------------------------
     # TAB 1: OFFICIAL GITHUB CLOUD MODELS
@@ -223,31 +309,13 @@ class AddModelDialog(QDialog):
         intro_lbl.setWordWrap(True)
         layout.addWidget(intro_lbl)
 
-        # Cloud Model 1: SignFlow-model-v1 (USER)
-        self.card_user = self._build_cloud_model_card(
-            repo_slug="SignFlow-model-v1-USER",
-            display_name="SignFlow-model-v1 (USER)",
-            badge_text="USER MODEL • INFERENCE ONLY",
-            badge_color=palette.accent_label,
-            desc_text="Production-ready model package for high-speed live webcam ASL translation (30–60 FPS). "
-                      "Includes pre-trained ASL classifier and MediaPipe hand landmarker bundle.",
-            size_text="~6.0 MB archive",
-            is_developer=False
-        )
-        layout.addWidget(self.card_user)
+        self.cloud_cards_container = QWidget()
+        self.cloud_cards_layout = QVBoxLayout(self.cloud_cards_container)
+        self.cloud_cards_layout.setContentsMargins(0, 0, 0, 0)
+        self.cloud_cards_layout.setSpacing(10)
+        layout.addWidget(self.cloud_cards_container)
 
-        # Cloud Model 2: SignFlow-model-v1 (DEV)
-        self.card_dev = self._build_cloud_model_card(
-            repo_slug="SignFlow-model-v1-DEV",
-            display_name="SignFlow-model-v1 (DEV)",
-            badge_text="DEVELOPER SUITE • TRAINING + INFERENCE",
-            badge_color=palette.success,
-            desc_text="Complete developer suite featuring automated static & dynamic gesture recorders, "
-                      "multi-core Random Forest training pipeline, CSV datasets, and live HUD inference engine.",
-            size_text="~6.5 MB archive",
-            is_developer=True
-        )
-        layout.addWidget(self.card_dev)
+        self._refresh_cloud_tab()
 
         # Shared Download Progress Box (Hidden until download starts)
         self.progress_box = QFrame()
@@ -292,6 +360,37 @@ class AddModelDialog(QDialog):
         layout.addWidget(self.progress_box)
         layout.addStretch()
         return tab_widget
+
+    def _refresh_cloud_tab(self):
+        while self.cloud_cards_layout.count():
+            item = self.cloud_cards_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        palette = ThemeManager.get_palette()
+        self.card_user = self._build_cloud_model_card(
+            repo_slug="SignFlow-model-v1-USER",
+            display_name="SignFlow-model-v1 (USER)",
+            badge_text="USER MODEL • INFERENCE ONLY",
+            badge_color=palette.accent_label,
+            desc_text="Production-ready model package for high-speed live webcam ASL translation (30–60 FPS). "
+                      "Includes pre-trained ASL classifier and MediaPipe hand landmarker bundle.",
+            size_text="~6.0 MB archive",
+            is_developer=False
+        )
+        self.cloud_cards_layout.addWidget(self.card_user)
+
+        self.card_dev = self._build_cloud_model_card(
+            repo_slug="SignFlow-model-v1-DEV",
+            display_name="SignFlow-model-v1 (DEV)",
+            badge_text="DEVELOPER SUITE • TRAINING + INFERENCE",
+            badge_color=palette.success,
+            desc_text="Complete developer suite featuring automated static & dynamic gesture recorders, "
+                      "multi-core Random Forest training pipeline, CSV datasets, and live HUD inference engine.",
+            size_text="~6.5 MB archive",
+            is_developer=True
+        )
+        self.cloud_cards_layout.addWidget(self.card_dev)
 
     def _build_cloud_model_card(
         self,
@@ -366,16 +465,47 @@ class AddModelDialog(QDialog):
         if is_installed:
             btn_activate = QPushButton("Activate Model")
             btn_activate.setProperty("class", "secondaryBtn")
-            btn_activate.clicked.connect(lambda: self._activate_existing_cloud_model(target_dir, display_name))
+            btn_activate.clicked.connect(lambda checked=False, td=target_dir, dn=display_name: self._activate_existing_cloud_model(td, dn))
             bottom_row.addWidget(btn_activate)
+
+            btn_del = QPushButton(" 🗑 Delete")
+            btn_del.setProperty("class", "dangerBtn")
+            btn_del.setToolTip(f"Delete '{display_name}' from models folder")
+            btn_del.clicked.connect(lambda checked=False, td=target_dir, dn=display_name: self._delete_cloud_model(td, dn))
+            bottom_row.addWidget(btn_del)
 
         btn_dl = QPushButton(" Re-download" if is_installed else "Download & Install")
         btn_dl.setProperty("class", "primaryBtn" if not is_installed else "secondaryBtn")
-        btn_dl.clicked.connect(lambda: self._start_github_download(repo_slug, display_name, target_dir))
+        btn_dl.clicked.connect(lambda checked=False, rs=repo_slug, dn=display_name, td=target_dir: self._start_github_download(rs, dn, td))
         bottom_row.addWidget(btn_dl)
 
         c_layout.addLayout(bottom_row)
         return card
+
+    def _delete_cloud_model(self, target_dir: Path, display_name: str):
+        reply = QMessageBox.question(
+            self,
+            "Delete Model Package",
+            f"Are you sure you want to delete model '{display_name}'?\n\n"
+            f"Location: {target_dir}\n\n"
+            "This will delete the model directory and unregister it from SignFlow.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            reg = ModelRegistry.get_instance()
+            deleted = False
+            for pkg in reg.get_all_packages():
+                if Path(pkg.folder_path).resolve() == target_dir.resolve():
+                    reg.delete_package(pkg.id, delete_disk_files=True)
+                    deleted = True
+                    break
+            if not deleted and target_dir.exists():
+                shutil.rmtree(target_dir, ignore_errors=True)
+
+            QMessageBox.information(self, "Model Deleted", f"Model '{display_name}' has been deleted.")
+            self._refresh_cloud_tab()
+            self._refresh_installed_tab()
 
     def _is_model_installed(self, target_dir: Path) -> bool:
         if not target_dir.exists() or not target_dir.is_dir():
@@ -599,3 +729,168 @@ class AddModelDialog(QDialog):
             self.accept()
         else:
             QMessageBox.warning(self, "Registration Error", msg)
+
+    # -------------------------------------------------------------------------
+    # TAB 3: INSTALLED MODELS (MANAGE & DELETE)
+    # -------------------------------------------------------------------------
+    def _create_installed_tab(self) -> QWidget:
+        palette = ThemeManager.get_palette()
+        self.installed_tab_widget = QWidget()
+        layout = QVBoxLayout(self.installed_tab_widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(10)
+
+        intro_lbl = QLabel(
+            "Manage your registered model packages. You can activate any model for live recognition or "
+            "delete unwanted models directly using the delete button beside each model."
+        )
+        intro_lbl.setStyleSheet(f"font-size: 11.5px; color: {palette.text_secondary};")
+        intro_lbl.setWordWrap(True)
+        layout.addWidget(intro_lbl)
+
+        self.installed_scroll = QScrollArea()
+        self.installed_scroll.setWidgetResizable(True)
+        self.installed_scroll.setFrameShape(QFrame.Shape.NoFrame)
+
+        self.installed_container = QWidget()
+        self.installed_container_layout = QVBoxLayout(self.installed_container)
+        self.installed_container_layout.setContentsMargins(0, 0, 0, 0)
+        self.installed_container_layout.setSpacing(10)
+
+        self.installed_scroll.setWidget(self.installed_container)
+        layout.addWidget(self.installed_scroll, 1)
+
+        self._refresh_installed_tab()
+        return self.installed_tab_widget
+
+    def _refresh_installed_tab(self):
+        if not hasattr(self, 'installed_container_layout'):
+            return
+
+        while self.installed_container_layout.count():
+            item = self.installed_container_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        palette = ThemeManager.get_palette()
+        reg = ModelRegistry.get_instance()
+        packages = reg.get_all_packages()
+        active = reg.get_active_package()
+
+        if not packages:
+            empty_box = QFrame()
+            empty_box.setProperty("class", "cardPanel")
+            eb_layout = QVBoxLayout(empty_box)
+            eb_layout.setContentsMargins(20, 28, 20, 28)
+            eb_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl = QLabel("No models currently installed or registered.")
+            lbl.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {palette.text_muted};")
+            lbl_sub = QLabel("Download an official model from the 'Official GitHub Models' tab or import a local folder.")
+            lbl_sub.setStyleSheet(f"font-size: 11.5px; color: {palette.text_secondary};")
+            eb_layout.addWidget(lbl, alignment=Qt.AlignmentFlag.AlignCenter)
+            eb_layout.addWidget(lbl_sub, alignment=Qt.AlignmentFlag.AlignCenter)
+            self.installed_container_layout.addWidget(empty_box)
+            self.installed_container_layout.addStretch()
+            return
+
+        for pkg in packages:
+            card = QFrame()
+            card.setProperty("class", "cardPanel")
+            c_layout = QHBoxLayout(card)
+            c_layout.setContentsMargins(14, 12, 14, 12)
+            c_layout.setSpacing(12)
+
+            info_vbox = QVBoxLayout()
+            info_vbox.setSpacing(4)
+
+            title_row = QHBoxLayout()
+            title_row.setSpacing(8)
+
+            lbl_name = QLabel(f"📦 {pkg.name}")
+            lbl_name.setStyleSheet(f"font-size: 13.5px; font-weight: 700; color: {palette.text_primary};")
+            title_row.addWidget(lbl_name)
+
+            badge_text = "DEVELOPER SUITE" if pkg.is_developer else "USER MODEL"
+            badge_color = palette.success if pkg.is_developer else palette.accent_label
+            badge = QLabel(badge_text)
+            badge.setStyleSheet(f"""
+                font-size: 9px;
+                font-weight: 700;
+                padding: 2px 6px;
+                border-radius: 4px;
+                background-color: {palette.bg_sidebar};
+                color: {badge_color};
+                border: 1px solid {palette.border_subtle};
+            """)
+            title_row.addWidget(badge)
+
+            is_active = (active and active.id == pkg.id)
+            if is_active:
+                active_badge = QLabel("✓ ACTIVE MODEL")
+                active_badge.setStyleSheet(f"""
+                    font-size: 9px;
+                    font-weight: 800;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    background-color: {palette.bg_sidebar};
+                    color: {palette.success};
+                    border: 1px solid {palette.success};
+                """)
+                title_row.addWidget(active_badge)
+
+            title_row.addStretch()
+            info_vbox.addLayout(title_row)
+
+            path_lbl = QLabel(f"Path: {pkg.folder_path}")
+            path_lbl.setStyleSheet(f"font-size: 11px; color: {palette.text_muted};")
+            info_vbox.addWidget(path_lbl)
+
+            c_layout.addLayout(info_vbox, 1)
+
+            # Action buttons beside each model
+            if not is_active:
+                btn_act = QPushButton("Activate")
+                btn_act.setProperty("class", "secondaryBtn")
+                btn_act.clicked.connect(lambda checked=False, p=pkg: self._activate_installed_pkg(p))
+                c_layout.addWidget(btn_act)
+
+            btn_del = QPushButton(" 🗑 Delete")
+            btn_del.setProperty("class", "dangerBtn")
+            btn_del.setToolTip(f"Delete model '{pkg.name}'")
+            btn_del.clicked.connect(lambda checked=False, p=pkg: self._delete_installed_pkg(p))
+            c_layout.addWidget(btn_del)
+
+            self.installed_container_layout.addWidget(card)
+
+        self.installed_container_layout.addStretch()
+
+    def _activate_installed_pkg(self, pkg: ModelPackage):
+        reg = ModelRegistry.get_instance()
+        reg.set_active_package(pkg.id)
+        self.model_imported.emit(pkg)
+        self._refresh_installed_tab()
+        self.accept()
+
+    def _delete_installed_pkg(self, pkg: ModelPackage):
+        folder = Path(pkg.folder_path)
+        is_under_models = (MODELS_DIR.resolve() in folder.resolve().parents) or (folder.resolve() == MODELS_DIR.resolve()) or (folder.parent.resolve() == MODELS_DIR.resolve())
+
+        prompt = (
+            f"Are you sure you want to delete model package '{pkg.name}'?\n\n"
+            f"Folder: {pkg.folder_path}\n\n"
+            + ("This will permanently delete the model files and unregister it."
+               if is_under_models else "This will unregister the model from SignFlow.")
+        )
+        reply = QMessageBox.question(
+            self,
+            "Delete Model Package",
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            reg = ModelRegistry.get_instance()
+            reg.delete_package(pkg.id, delete_disk_files=is_under_models)
+            QMessageBox.information(self, "Model Deleted", f"'{pkg.name}' was removed successfully.")
+            self._refresh_installed_tab()
+            self._refresh_cloud_tab()

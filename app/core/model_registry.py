@@ -333,6 +333,24 @@ class ModelRegistry(QObject):
             return True
         return False
 
+    def delete_package(self, package_id: str, delete_disk_files: bool = False) -> Tuple[bool, str]:
+        pkg = self._packages.get(package_id)
+        if not pkg:
+            return False, "Model package not found."
+
+        name = pkg.name
+        folder = Path(pkg.folder_path)
+        self.remove_package(package_id)
+
+        if delete_disk_files and folder.exists() and folder.is_dir():
+            try:
+                import shutil
+                shutil.rmtree(folder)
+            except Exception as e:
+                return True, f"Unregistered '{name}', but could not delete files: {e}"
+
+        return True, f"Successfully deleted model '{name}'."
+
     # -------------------------------------------------------------------------
     # Backward compatibility for individual ModelEntry cataloging
     # -------------------------------------------------------------------------

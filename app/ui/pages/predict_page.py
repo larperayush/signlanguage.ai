@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
 from PySide6.QtGui import QImage, QClipboard
 
+from app.core.config import MODELS_DIR
 from app.core.theme import ThemeManager
 from app.core.camera_manager import CameraManager
 from app.core.model_registry import ModelRegistry, ModelPackage
@@ -98,11 +99,17 @@ class PredictPage(QWidget):
         self.add_model_btn = QPushButton(" + Add Model")
         self.add_model_btn.setProperty("class", "secondaryBtn")
         self.add_model_btn.setIcon(get_icon("box", palette.text_secondary, palette.accent, size=14))
-        self.add_model_btn.setToolTip("Import any trained sign language model folder (User or Developer model)")
-        self.add_model_btn.clicked.connect(self._open_add_model_dialog)
+        self.add_model_btn.setToolTip("Import or download trained sign language models")
+        self.add_model_btn.clicked.connect(lambda: self._open_add_model_dialog(initial_tab=0))
+
+        self.delete_model_btn = QPushButton(" 🗑 Delete")
+        self.delete_model_btn.setProperty("class", "dangerBtn")
+        self.delete_model_btn.setToolTip("Delete or unregister the currently selected model")
+        self.delete_model_btn.clicked.connect(self._delete_selected_model)
 
         model_hrow.addWidget(self.model_combo)
         model_hrow.addWidget(self.add_model_btn)
+        model_hrow.addWidget(self.delete_model_btn)
         model_vbox.addWidget(lbl_model)
         model_vbox.addLayout(model_hrow)
         top_layout.addLayout(model_vbox)
@@ -262,6 +269,7 @@ class PredictPage(QWidget):
         if not packages:
             self.model_combo.addItem("No models detected — Click + Add Model", userData="")
             self.action_btn.setEnabled(False)
+            self.delete_model_btn.setEnabled(False)
             self.central_stack_layout.setCurrentWidget(self.empty_state_box)
             self.model_combo.blockSignals(False)
             return
@@ -273,14 +281,18 @@ class PredictPage(QWidget):
             if active and pkg.id == active.id:
                 active_idx = i
 
+        # Provide a quick jump to the Installed Models manager
+        self.model_combo.addItem("⚙ Manage / Delete Models...", userData="__manage__")
+
         self.model_combo.setCurrentIndex(active_idx)
         self.action_btn.setEnabled(True)
+        self.delete_model_btn.setEnabled(True)
         self.central_stack_layout.setCurrentWidget(self.live_container)
         self.model_combo.blockSignals(False)
 
     def get_selected_package(self) -> Optional[ModelPackage]:
         pkg_id = self.model_combo.currentData()
-        if not pkg_id:
+        if not pkg_id or pkg_id == "__manage__":
             return None
         return self._model_registry.get_package(pkg_id)
 
@@ -288,6 +300,20 @@ class PredictPage(QWidget):
         pkg_id = self.model_combo.currentData()
         if not pkg_id:
             return
+
+        if pkg_id == "__manage__":
+            # Revert dropdown to current active package
+            active = self._model_registry.get_active_package()
+            if active:
+                for i in range(self.model_combo.count()):
+                    if self.model_combo.itemData(i) == active.id:
+                        self.model_combo.blockSignals(True)
+                        self.model_combo.setCurrentIndex(i)
+                        self.model_combo.blockSignals(False)
+                        break
+            self._open_add_model_dialog(initial_tab=2)
+            return
+
         pkg = self._model_registry.get_package(pkg_id)
         if pkg:
             self._model_registry.set_active_package(pkg_id)
@@ -313,10 +339,41 @@ class PredictPage(QWidget):
 
         self.central_stack_layout.setCurrentWidget(self.live_container)
 
-    def _open_add_model_dialog(self):
-        dlg = AddModelDialog(self)
+    def _open_add_model_dialog(self, initial_tab: int = 0):
+        dlg = AddModelDialog(self, initial_tab=initial_tab)
         dlg.model_imported.connect(self._on_model_imported)
         dlg.exec()
+        self._populate_models()
+
+    def _delete_selected_model(self):
+        pkg = self.get_selected_package()
+        if not pkg:
+            QMessageBox.information(self, "No Model Selected", "Please select a valid model from the dropdown to delete.")
+            return
+
+        if self._is_translating:
+            self._stop_translation()
+
+        folder = Path(pkg.folder_path)
+        is_under_models = (MODELS_DIR.resolve() in folder.resolve().parents) or (folder.resolve() == MODELS_DIR.resolve()) or (folder.parent.resolve() == MODELS_DIR.resolve())
+
+        prompt = (
+            f"Are you sure you want to delete model '{pkg.name}'?\n\n"
+            f"Folder: {pkg.folder_path}\n\n"
+            + ("This will permanently delete the model directory and unregister it."
+               if is_under_models else "This will unregister the model from SignFlow.")
+        )
+        reply = QMessageBox.question(
+            self,
+            "Delete Model Package",
+            prompt,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            success, msg = self._model_registry.delete_package(pkg.id, delete_disk_files=is_under_models)
+            self._populate_models()
+            QMessageBox.information(self, "Model Deleted", msg)
 
     def _on_model_imported(self, package: ModelPackage):
         self._populate_models()
