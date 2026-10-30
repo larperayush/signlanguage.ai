@@ -30,6 +30,53 @@ from app.core.model_registry import ModelRegistry, detect_model_in_folder, Model
 from app.resources.icons import get_icon
 
 
+def make_circular_avatar(image_path: Path, diameter: int = 36, is_official: bool = True) -> QPixmap:
+    """Create a guaranteed, mathematically perfect anti-aliased circular avatar with a subtle ring."""
+    if not image_path.exists():
+        return QPixmap()
+
+    src = QPixmap(str(image_path))
+    if src.isNull():
+        return QPixmap()
+
+    scale = 2  # 2x for High-DPI sharpness
+    canvas_size = diameter * scale
+
+    min_dim = min(src.width(), src.height())
+    sx = (src.width() - min_dim) // 2
+    sy = (src.height() - min_dim) // 2
+    cropped = src.copy(sx, sy, min_dim, min_dim)
+    scaled = cropped.scaled(
+        canvas_size, canvas_size,
+        Qt.AspectRatioMode.IgnoreAspectRatio,
+        Qt.TransformationMode.SmoothTransformation
+    )
+
+    out = QPixmap(canvas_size, canvas_size)
+    out.fill(Qt.GlobalColor.transparent)
+
+    p = QPainter(out)
+    p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+    inset = 2 * scale
+    draw_size = canvas_size - (2 * inset)
+
+    path = QPainterPath()
+    path.addEllipse(inset, inset, draw_size, draw_size)
+    p.setClipPath(path)
+    p.drawPixmap(0, 0, scaled)
+
+    p.setClipping(False)
+    ring_color = QColor(245, 180, 25, 220) if is_official else QColor(160, 160, 160, 140)
+    p.setPen(QPen(ring_color, 1.5 * scale))
+    p.drawEllipse(inset, inset, draw_size, draw_size)
+    p.end()
+
+    out.setDevicePixelRatio(scale)
+    return out
+
+
 class GitHubModelDownloader(QThread):
     """Background worker for downloading and extracting GitHub repository archives."""
     progress = Signal(int, str)             # percent (0-100), status message
@@ -388,48 +435,15 @@ class AddModelDialog(QDialog):
         cs_layout.setContentsMargins(6, 4, 6, 4)
         cs_layout.setSpacing(10)
 
-        # Profile avatar (High-DPI circular rendering with inset so edges are never clipped)
+        # Profile avatar (Guaranteed pure circle with smooth ring and 18px radius)
         avatar_lbl = QLabel()
         avatar_lbl.setFixedSize(36, 36)
         avatar_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar_lbl.setStyleSheet("background: transparent; border: none; border-radius: 18px;")
         avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / author_avatar_filename
-        if avatar_path.exists():
-            src_pix = QPixmap(str(avatar_path))
-            if not src_pix.isNull():
-                size = 34
-                scale = 2
-                c_size = size * scale
-                out = QPixmap(c_size, c_size)
-                out.fill(Qt.GlobalColor.transparent)
-
-                p = QPainter(out)
-                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-
-                # Inset by 2px (scaled) so round edge is never clipped by bounds
-                inset = 2
-                path = QPainterPath()
-                path.addEllipse(inset, inset, c_size - (2 * inset), c_size - (2 * inset))
-                p.setClipPath(path)
-
-                scaled = src_pix.scaled(
-                    c_size, c_size,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                ox = (c_size - scaled.width()) // 2
-                oy = (c_size - scaled.height()) // 2
-                p.drawPixmap(ox, oy, scaled)
-
-                # Draw smooth circular border ring
-                p.setClipping(False)
-                ring_color = QColor(245, 180, 25, 180) if is_official else QColor(160, 160, 160, 120)
-                p.setPen(QPen(ring_color, 1.5 * scale))
-                p.drawEllipse(inset, inset, c_size - (2 * inset), c_size - (2 * inset))
-                p.end()
-
-                out.setDevicePixelRatio(scale)
-                avatar_lbl.setPixmap(out)
+        avatar_pix = make_circular_avatar(avatar_path, diameter=36, is_official=is_official)
+        if not avatar_pix.isNull():
+            avatar_lbl.setPixmap(avatar_pix)
 
         author_info = QHBoxLayout()
         author_info.setSpacing(6)
