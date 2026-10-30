@@ -1,7 +1,6 @@
 """
-About the Project Page (Exhibition Information Panel).
-Typeset as an editorial exhibition panel presenting SignFlow Studio,
-its creators Ayush Pandey & Rajat, and the four core questions.
+About the Project Page.
+Editorial overview panel presenting SignFlow Studio and the open-source mission.
 """
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QScrollArea, QSizePolicy
@@ -31,8 +30,8 @@ class EditorialSeparator(QFrame):
 
 class OverviewPage(QWidget):
     """
-    Editorial exhibition information panel for SignFlow Studio.
-    Presents a clean, continuous typographic composition organized around 4 questions.
+    Editorial information panel for SignFlow Studio.
+    Presents the creators, purpose, project architecture, and real-world impact.
     """
     navigate_to = Signal(int)
 
@@ -117,7 +116,7 @@ class OverviewPage(QWidget):
             letter-spacing: -0.2px;
         """)
 
-        creators_school = QLabel("Class XI\nYojshakti Model School, Rohini Sector 3")
+        creators_school = QLabel("Student Developers & AI Enthusiasts\nOpen-Source Accessibility Project")
         creators_school.setStyleSheet(f"""
             font-size: 14px;
             color: {palette.text_secondary};
@@ -146,9 +145,9 @@ class OverviewPage(QWidget):
         """)
 
         q1_p1 = QLabel(
-            "We are two friends with a shared interest in technology and a curiosity about how artificial "
-            "intelligence works. Although we're still learning the fundamentals of machine learning, we wanted "
-            "to challenge ourselves by building something practical for our school exhibition."
+            "We are two friends with a shared interest in technology and computer vision. Although we're still "
+            "learning the fundamentals of machine learning, we wanted to challenge ourselves by building a "
+            "modular open-source harness for real-time sign language recognition."
         )
         q1_p1.setStyleSheet(f"font-size: 14px; color: {palette.text_secondary}; line-height: 1.6;")
         q1_p1.setWordWrap(True)
@@ -184,8 +183,8 @@ class OverviewPage(QWidget):
         q2_p1.setWordWrap(True)
 
         q2_p2 = QLabel(
-            "More importantly, we wanted to work on an idea that could have a meaningful purpose "
-            "beyond our exhibition."
+            "More importantly, we wanted to work on an open-source tool that could have a meaningful purpose "
+            "in real-time communication accessibility."
         )
         q2_p2.setStyleSheet(f"font-size: 14px; color: {palette.text_secondary}; line-height: 1.6;")
         q2_p2.setWordWrap(True)
@@ -291,8 +290,8 @@ class OverviewPage(QWidget):
 
         # Concluding disclaimer statement
         q4_conclusion = QLabel(
-            "These are potential future applications. Our current project is a student prototype, "
-            "not a complete sign-language translation system."
+            "These are potential applications. Our current project is an open-source model harness and prototype "
+            "designed for community experimentation and real-time accessibility."
         )
         q4_conclusion.setStyleSheet(f"font-size: 13.5px; color: {palette.text_muted}; line-height: 1.55; font-style: italic;")
         q4_conclusion.setWordWrap(True)

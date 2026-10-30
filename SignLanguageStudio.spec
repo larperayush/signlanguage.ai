@@ -11,15 +11,13 @@ block_cipher = None
 
 SPEC_ROOT = Path(os.path.abspath(SPECPATH))
 
+# Include resources directory
 datas = [
     (str(SPEC_ROOT / "app" / "resources"), "app/resources"),
 ]
 
-# Include model directory and csv if present
 if (SPEC_ROOT / "models").exists():
     datas.append((str(SPEC_ROOT / "models"), "models"))
-if (SPEC_ROOT / "static_signs.csv").exists():
-    datas.append((str(SPEC_ROOT / "static_signs.csv"), "."))
 
 a = Analysis(
     ['run_app.py'],

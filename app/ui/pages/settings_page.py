@@ -486,8 +486,8 @@ class SettingsPage(QWidget):
         diag_grid.setVerticalSpacing(8)
 
         diag_info = [
-            ("Application Version:", "SignFlow Studio v1.0.0 (School Exhibition Release)"),
-            ("Exhibition Affiliation:", "Class XI • Yojshakti Model School, Rohini Sector 3"),
+            ("Application Version:", "SignFlow AI Studio v1.0.0"),
+            ("Project Architecture:", "Open-Source AI Model Harness"),
             ("UI Framework:", "PySide6 (Qt for Python 6.12.0)"),
             ("Python Runtime:", f"{platform.python_version()} ({Path(sys.executable).name})"),
             ("Host OS:", f"{platform.system()} {platform.release()} ({platform.machine()})"),
