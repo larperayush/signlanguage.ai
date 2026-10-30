@@ -158,10 +158,6 @@ class AddModelDialog(QDialog):
         header_vbox.addWidget(desc)
         main_layout.addLayout(header_vbox)
 
-        # Creator Profile Banner (Rajat / rajatcoder132)
-        creator_banner = self._create_creator_banner()
-        main_layout.addWidget(creator_banner)
-
         # Main Tabs
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet(f"""
@@ -215,81 +211,6 @@ class AddModelDialog(QDialog):
         self.close_btn.clicked.connect(self.reject)
         btn_row.addWidget(self.close_btn)
         main_layout.addLayout(btn_row)
-
-    def _create_creator_banner(self) -> QWidget:
-        palette = ThemeManager.get_palette()
-        banner = QFrame()
-        banner.setProperty("class", "cardPanelElevated")
-        b_layout = QHBoxLayout(banner)
-        b_layout.setContentsMargins(14, 10, 14, 10)
-        b_layout.setSpacing(14)
-
-        # Profile avatar
-        avatar_lbl = QLabel()
-        avatar_lbl.setFixedSize(48, 48)
-        avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / "author_avatar.png"
-        if avatar_path.exists():
-            src_pix = QPixmap(str(avatar_path))
-            if not src_pix.isNull():
-                size = 48
-                out = QPixmap(size, size)
-                out.fill(Qt.GlobalColor.transparent)
-                painter = QPainter(out)
-                painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-                path = QPainterPath()
-                path.addEllipse(0, 0, size, size)
-                painter.setClipPath(path)
-                painter.drawPixmap(
-                    0, 0, size, size,
-                    src_pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-                )
-                painter.end()
-                avatar_lbl.setPixmap(out)
-
-        info_vbox = QVBoxLayout()
-        info_vbox.setSpacing(3)
-
-        name_row = QHBoxLayout()
-        name_row.setSpacing(8)
-
-        name_lbl = QLabel("Rajat")
-        name_lbl.setStyleSheet(f"font-size: 14.5px; font-weight: 800; color: {palette.text_primary};")
-
-        handle_lbl = QLabel("@rajatcoder132")
-        handle_lbl.setStyleSheet(f"font-size: 12px; font-weight: 600; color: {palette.accent_label};")
-
-        badge_author = QLabel("REPOSITORY CREATOR")
-        badge_author.setStyleSheet(f"""
-            font-size: 9px;
-            font-weight: 800;
-            padding: 2px 7px;
-            border-radius: 4px;
-            background-color: {palette.bg_sidebar};
-            color: {palette.success};
-            border: 1px solid {palette.border_subtle};
-        """)
-
-        name_row.addWidget(name_lbl)
-        name_row.addWidget(handle_lbl)
-        name_row.addWidget(badge_author)
-        name_row.addStretch()
-
-        desc_lbl = QLabel("Creator & Maintainer of official SignFlow AI models repository on GitHub.")
-        desc_lbl.setStyleSheet(f"font-size: 11px; color: {palette.text_secondary};")
-
-        info_vbox.addLayout(name_row)
-        info_vbox.addWidget(desc_lbl)
-
-        btn_gh = QPushButton(" View GitHub Profile")
-        btn_gh.setProperty("class", "secondaryBtn")
-        btn_gh.setIcon(get_icon("link", palette.text_secondary, palette.accent, size=13))
-        btn_gh.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://github.com/rajatcoder132")))
-
-        b_layout.addWidget(avatar_lbl)
-        b_layout.addLayout(info_vbox, 1)
-        b_layout.addWidget(btn_gh)
-        return banner
 
     # -------------------------------------------------------------------------
     # TAB 1: OFFICIAL GITHUB CLOUD MODELS
@@ -376,7 +297,13 @@ class AddModelDialog(QDialog):
             desc_text="Production-ready model package for high-speed live webcam ASL translation (30–60 FPS). "
                       "Includes pre-trained ASL classifier and MediaPipe hand landmarker bundle.",
             size_text="~6.0 MB archive",
-            is_developer=False
+            is_developer=False,
+            author_name="Rajat",
+            author_handle="@rajatcoder132",
+            author_avatar_filename="author_avatar.png",
+            author_url="https://github.com/rajatcoder132",
+            is_official=True,
+            role_badge="OFFICIAL CREATOR"
         )
         self.cloud_cards_layout.addWidget(self.card_user)
 
@@ -388,7 +315,13 @@ class AddModelDialog(QDialog):
             desc_text="Complete developer suite featuring automated static & dynamic gesture recorders, "
                       "multi-core Random Forest training pipeline, CSV datasets, and live HUD inference engine.",
             size_text="~6.5 MB archive",
-            is_developer=True
+            is_developer=True,
+            author_name="Rajat",
+            author_handle="@rajatcoder132",
+            author_avatar_filename="author_avatar.png",
+            author_url="https://github.com/rajatcoder132",
+            is_official=True,
+            role_badge="OFFICIAL CREATOR"
         )
         self.cloud_cards_layout.addWidget(self.card_dev)
 
@@ -400,7 +333,13 @@ class AddModelDialog(QDialog):
         badge_color: str,
         desc_text: str,
         size_text: str,
-        is_developer: bool
+        is_developer: bool,
+        author_name: str = "Rajat",
+        author_handle: str = "@rajatcoder132",
+        author_avatar_filename: str = "author_avatar.png",
+        author_url: str = "https://github.com/rajatcoder132",
+        is_official: bool = True,
+        role_badge: str = "OFFICIAL CREATOR"
     ) -> QFrame:
         palette = ThemeManager.get_palette()
         card = QFrame()
@@ -414,7 +353,7 @@ class AddModelDialog(QDialog):
         top_row.setSpacing(10)
 
         name_lbl = QLabel(display_name)
-        name_lbl.setStyleSheet(f"font-size: 14px; font-weight: 700; color: {palette.text_primary};")
+        name_lbl.setStyleSheet(f"font-size: 14.5px; font-weight: 700; color: {palette.text_primary};")
         top_row.addWidget(name_lbl)
 
         badge = QLabel(badge_text)
@@ -434,6 +373,80 @@ class AddModelDialog(QDialog):
         size_lbl.setStyleSheet(f"font-size: 11px; color: {palette.text_muted};")
         top_row.addWidget(size_lbl)
         c_layout.addLayout(top_row)
+
+        # Creator Attribution Strip directly on each model bar
+        creator_strip = QFrame()
+        creator_strip.setStyleSheet(f"""
+            QFrame {{
+                background-color: {palette.bg_sidebar};
+                border: 1px solid {palette.border_subtle};
+                border-radius: 6px;
+                padding: 4px 8px;
+            }}
+        """)
+        cs_layout = QHBoxLayout(creator_strip)
+        cs_layout.setContentsMargins(6, 4, 6, 4)
+        cs_layout.setSpacing(10)
+
+        # Profile avatar
+        avatar_lbl = QLabel()
+        avatar_lbl.setFixedSize(30, 30)
+        avatar_path = Path(__file__).resolve().parent.parent.parent / "resources" / "icons" / author_avatar_filename
+        if avatar_path.exists():
+            src_pix = QPixmap(str(avatar_path))
+            if not src_pix.isNull():
+                size = 30
+                out = QPixmap(size, size)
+                out.fill(Qt.GlobalColor.transparent)
+                p = QPainter(out)
+                p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+                p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+                path = QPainterPath()
+                path.addEllipse(0, 0, size, size)
+                p.setClipPath(path)
+                p.drawPixmap(
+                    0, 0, size, size,
+                    src_pix.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+                )
+                p.end()
+                avatar_lbl.setPixmap(out)
+
+        author_info = QHBoxLayout()
+        author_info.setSpacing(6)
+
+        lbl_author = QLabel(author_name)
+        lbl_author.setStyleSheet(f"font-size: 12px; font-weight: 700; color: {palette.text_primary};")
+
+        lbl_handle = QLabel(author_handle)
+        lbl_handle.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {palette.accent_label};")
+
+        badge_official = QLabel(role_badge)
+        badge_official.setStyleSheet(f"""
+            font-size: 8.5px;
+            font-weight: 800;
+            padding: 2px 6px;
+            border-radius: 3px;
+            background-color: {palette.bg_card};
+            color: {palette.success if is_official else palette.text_secondary};
+            border: 1px solid {palette.border_subtle};
+        """)
+
+        author_info.addWidget(lbl_author)
+        author_info.addWidget(lbl_handle)
+        author_info.addWidget(badge_official)
+        author_info.addStretch()
+
+        btn_creator_gh = QPushButton(" Creator Profile")
+        btn_creator_gh.setProperty("class", "secondaryBtn")
+        btn_creator_gh.setFixedHeight(24)
+        btn_creator_gh.setStyleSheet("font-size: 10px; padding: 2px 8px;")
+        btn_creator_gh.setIcon(get_icon("link", palette.text_secondary, palette.accent, size=11))
+        btn_creator_gh.clicked.connect(lambda checked=False, url=author_url: QDesktopServices.openUrl(QUrl(url)))
+
+        cs_layout.addWidget(avatar_lbl)
+        cs_layout.addLayout(author_info, 1)
+        cs_layout.addWidget(btn_creator_gh)
+        c_layout.addWidget(creator_strip)
 
         # Description
         desc_lbl = QLabel(desc_text)
@@ -840,6 +853,14 @@ class AddModelDialog(QDialog):
 
             title_row.addStretch()
             info_vbox.addLayout(title_row)
+
+            # Creator Attribution on each installed model card
+            is_signflow_official = ("signflow" in pkg.name.lower() or "rajatcoder132" in pkg.folder_path.lower() or "SignFlow" in pkg.folder_path)
+            creator_lbl = QLabel(
+                "Creator: Rajat (@rajatcoder132) • Official SignFlow Model" if is_signflow_official else "Creator: Custom Local Model"
+            )
+            creator_lbl.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {palette.accent_label if is_signflow_official else palette.text_secondary};")
+            info_vbox.addWidget(creator_lbl)
 
             path_lbl = QLabel(f"Path: {pkg.folder_path}")
             path_lbl.setStyleSheet(f"font-size: 11px; color: {palette.text_muted};")
