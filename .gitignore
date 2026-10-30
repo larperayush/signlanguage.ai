@@ -22,16 +22,17 @@ __pycache__/
 data/
 datasets/
 
-# AI Model Binaries (Harness loads custom models dynamically via 'Add Model')
-models/*.joblib
-models/*.task
-models/*.onnx
-models/*.pkl
-models/*.h5
-models/*.keras
-models/*.pt
-models/*.pth
+# AI Model Binaries & Imported Model Packages (Harness is decoupled; loads models via 'Add Model')
+models/*
 !models/.gitkeep
+*.joblib
+*.task
+*.onnx
+*.pkl
+*.h5
+*.keras
+*.pt
+*.pth
 
 # PyInstaller / Build Artifacts
 build/

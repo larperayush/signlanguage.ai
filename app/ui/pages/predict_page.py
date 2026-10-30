@@ -1,74 +1,91 @@
 """
-Live Translation Workspace & Open-Source AI Model Harness.
-Acts as a pure harness:
-- If no models are added, displays "No models detected" and prompts user to click "+ Add Model".
-- Distinguishes between User Model (inference only) and Developer Model (training suite).
-- On "Start Translation", directly launches the native 60 FPS predict_live.py window
-  with standard green landmark connections (0, 255, 0), red dots, and native HUD.
+Live Translation Workspace & Open-Source AI Model Harness for SignFlow Studio.
+Directly embeds the native 60 FPS OpenCV + MediaPipe + Scikit-Learn prediction pipeline
+from predict_live.py inside the application window.
+
+Features:
+- Pure Model Harness: prompts user to add models if none exist
+- Embedded Camera Canvas: displays live camera output with green skeleton bones (0, 255, 0),
+  red landmark dots (0, 0, 255), dynamic J/Z gesture trails, and sleek glassmorphic HUD
+- Threaded background worker (NativeInferenceWorker): zero GUI lag or dropped frames
+- Interactive Sentence Accumulator with Space, Backspace, Clear, and Copy controls
+- Direct integration with OBS Virtual Camera (Discord / Zoom / Google Meet)
 """
 import os
 import sys
-import subprocess
-from typing import Optional
+from typing import Optional, List
 from pathlib import Path
 
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
-    QComboBox, QMessageBox, QSizePolicy, QApplication
+    QComboBox, QMessageBox, QSizePolicy, QApplication, QStackedLayout
 )
 from PySide6.QtCore import Qt, Signal, Slot, QTimer
+from PySide6.QtGui import QImage, QClipboard
 
 from app.core.theme import ThemeManager
 from app.core.camera_manager import CameraManager
 from app.core.model_registry import ModelRegistry, ModelPackage
+from app.core.native_inference_engine import NativeInferenceWorker
 from app.resources.icons import get_icon, get_pixmap
 from app.ui.components.widgets import StatusPill
 from app.ui.components.add_model_dialog import AddModelDialog
 from app.ui.components.camera_settings_dialog import CameraSettingsDialog
 from app.ui.components.camera_preview_widget import CameraPreviewWidget
+from app.ui.components.embedded_camera_canvas import EmbeddedCameraCanvas
 
 __all__ = ["PredictPage", "CameraPreviewWidget", "CameraSettingsDialog"]
 
 
+def get_available_cameras() -> List[str]:
+    """Discover available physical and virtual webcams on Windows."""
+    try:
+        from pygrabber.dshow_graph import FilterGraph
+        devices = FilterGraph().get_input_devices()
+        if devices:
+            return devices
+    except Exception:
+        pass
+    return ["Camera Index 0", "Camera Index 1"]
+
+
 class PredictPage(QWidget):
     """
-    Main Live Translation Screen and Model Harness.
-    Hosts Model Selector, Add Model action, and Native Inference Runner.
+    Main Live Translation Screen and Open-Source Model Harness.
+    Hosts Model Selector, Embedded Real-Time Camera Canvas, and Interactive Sentence Builder.
     """
     def __init__(self, camera_manager: CameraManager, parent=None):
         super().__init__(parent)
         self._camera_manager = camera_manager
         self._model_registry = ModelRegistry.get_instance()
 
-        self._proc: Optional[subprocess.Popen] = None
+        self._worker: Optional[NativeInferenceWorker] = None
         self._is_translating = False
-
-        # Process monitor timer
-        self._proc_timer = QTimer(self)
-        self._proc_timer.timeout.connect(self._check_proc_status)
+        self._current_sentence = ""
 
         self._setup_ui()
         self._connect_signals()
+        self._populate_cameras()
         self._populate_models()
 
     def _setup_ui(self):
         palette = ThemeManager.get_palette()
         root_layout = QVBoxLayout(self)
-        root_layout.setContentsMargins(24, 18, 24, 24)
-        root_layout.setSpacing(18)
+        root_layout.setContentsMargins(20, 14, 20, 18)
+        root_layout.setSpacing(12)
 
         # =====================================================================
-        # TOP MENU BAR: Model Selection, Add Model, Start Translation
+        # 1. TOP MENU BAR: Model Harness Selector, Camera Picker, Translation Action
         # =====================================================================
         top_bar = QFrame()
         top_bar.setProperty("class", "cardPanelElevated")
         top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(16, 12, 16, 12)
-        top_layout.setSpacing(14)
+        top_layout.setContentsMargins(14, 10, 14, 10)
+        top_layout.setSpacing(12)
 
-        # 1. Model Selector Group
+        # Model Selection Group
         model_vbox = QVBoxLayout()
-        model_vbox.setSpacing(3)
+        model_vbox.setSpacing(2)
         lbl_model = QLabel("AI MODEL HARNESS")
         lbl_model.setStyleSheet(f"font-size: 9.5px; font-weight: 700; color: {palette.text_muted}; letter-spacing: 0.6px;")
 
@@ -76,12 +93,12 @@ class PredictPage(QWidget):
         model_hrow.setSpacing(8)
 
         self.model_combo = QComboBox()
-        self.model_combo.setMinimumWidth(260)
+        self.model_combo.setMinimumWidth(240)
         self.model_combo.currentIndexChanged.connect(self._on_model_selected)
 
         self.add_model_btn = QPushButton(" + Add Model")
         self.add_model_btn.setProperty("class", "secondaryBtn")
-        self.add_model_btn.setIcon(get_icon("box", palette.text_secondary, palette.accent, size=15))
+        self.add_model_btn.setIcon(get_icon("box", palette.text_secondary, palette.accent, size=14))
         self.add_model_btn.setToolTip("Import any trained sign language model folder (User or Developer model)")
         self.add_model_btn.clicked.connect(self._open_add_model_dialog)
 
@@ -91,33 +108,41 @@ class PredictPage(QWidget):
         model_vbox.addLayout(model_hrow)
         top_layout.addLayout(model_vbox)
 
+        # Camera Device Selector Group
+        cam_vbox = QVBoxLayout()
+        cam_vbox.setSpacing(2)
+        lbl_cam = QLabel("CAMERA DEVICE")
+        lbl_cam.setStyleSheet(f"font-size: 9.5px; font-weight: 700; color: {palette.text_muted}; letter-spacing: 0.6px;")
+
+        self.camera_combo = QComboBox()
+        self.camera_combo.setMinimumWidth(200)
+        cam_vbox.addWidget(lbl_cam)
+        cam_vbox.addWidget(self.camera_combo)
+        top_layout.addLayout(cam_vbox)
+
         top_layout.addStretch()
 
-        # 2. Engine Status Pill
+        # Engine Status Pill
         self.status_pill = StatusPill("No Model Loaded", "neutral")
         top_layout.addWidget(self.status_pill)
 
-        # 3. Primary Start / Stop Translation Action Button
-        palette = ThemeManager.get_palette()
+        # Primary Action Button: Start / Stop Translation
         btn_text_color = "#1C1917" if not palette.is_dark else "#161513"
-
         self.action_btn = QPushButton(" Start Translation")
         self.action_btn.setProperty("class", "primaryBtn")
-        self.action_btn.setMinimumHeight(40)
-        self.action_btn.setIcon(get_icon("play", btn_text_color, size=16))
+        self.action_btn.setMinimumHeight(38)
+        self.action_btn.setIcon(get_icon("play", btn_text_color, size=15))
         self.action_btn.clicked.connect(self._toggle_translation)
         top_layout.addWidget(self.action_btn)
 
         root_layout.addWidget(top_bar)
 
         # =====================================================================
-        # MAIN WORKSPACE: Model Details Card / Empty State View
+        # 2. CENTRAL WORKSPACE: Stack containing Empty State OR Embedded Canvas
         # =====================================================================
-        self.main_content_frame = QFrame()
-        self.main_content_frame.setProperty("class", "cardPanel")
-        self.main_content_layout = QVBoxLayout(self.main_content_frame)
-        self.main_content_layout.setContentsMargins(28, 28, 28, 28)
-        self.main_content_layout.setSpacing(18)
+        self.central_stack = QFrame()
+        self.central_stack.setProperty("class", "cardPanel")
+        self.central_stack_layout = QStackedLayout(self.central_stack)
 
         # A. Empty State Widget (Shown when NO models exist)
         self.empty_state_box = QWidget()
@@ -136,7 +161,7 @@ class PredictPage(QWidget):
         desc_empty = QLabel(
             "SignFlow is an open-source model harness with zero bundled models.\n"
             "Click '+ Add Model' in the top bar to connect your model directory\n"
-            "(e.g. C:/Users/.../SignLanguageAI)."
+            "(e.g. models/SignFlow-model-v1-USER or your custom training folder)."
         )
         desc_empty.setStyleSheet(f"font-size: 13px; color: {palette.text_secondary}; line-height: 1.5;")
         desc_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -151,93 +176,87 @@ class PredictPage(QWidget):
         es_layout.addWidget(title_empty)
         es_layout.addWidget(desc_empty)
         es_layout.addWidget(btn_add_empty, alignment=Qt.AlignmentFlag.AlignCenter)
-        self.main_content_layout.addWidget(self.empty_state_box)
 
-        # B. Loaded Model Details Card (Shown when a model IS loaded)
-        self.loaded_card = QWidget()
-        lc_layout = QVBoxLayout(self.loaded_card)
-        lc_layout.setSpacing(16)
+        # B. Live Translation Container (Shown when a model is selected)
+        self.live_container = QWidget()
+        lc_layout = QVBoxLayout(self.live_container)
+        lc_layout.setContentsMargins(0, 0, 0, 0)
+        lc_layout.setSpacing(10)
 
-        # Header Row
-        lc_header = QHBoxLayout()
-        self.lbl_active_name = QLabel("Active Model")
-        self.lbl_active_name.setStyleSheet(f"font-size: 19px; font-weight: 800; color: {palette.text_primary};")
+        # Embedded Camera Video Canvas
+        self.camera_canvas = EmbeddedCameraCanvas(self)
+        self.camera_canvas.key_space_pressed.connect(self._on_space_pressed)
+        self.camera_canvas.key_backspace_pressed.connect(self._on_backspace_pressed)
+        self.camera_canvas.key_clear_pressed.connect(self._on_clear_pressed)
+        lc_layout.addWidget(self.camera_canvas, 1)
 
-        self.model_type_badge = QLabel("USER MODEL")
-        self.model_type_badge.setStyleSheet(f"""
-            padding: 3px 10px; border-radius: 12px;
-            background-color: {palette.accent_subtle};
-            color: {palette.accent_label}; font-size: 11px; font-weight: 700;
-            border: 1px solid {palette.accent_border};
-        """)
-
-        lc_header.addWidget(self.lbl_active_name)
-        lc_header.addWidget(self.model_type_badge)
-        lc_header.addStretch()
-        lc_layout.addLayout(lc_header)
-
-        # Components Checklist Card
-        components_box = QFrame()
-        components_box.setProperty("class", "cardPanelElevated")
-        cb_layout = QVBoxLayout(components_box)
-        cb_layout.setContentsMargins(18, 16, 18, 16)
-        cb_layout.setSpacing(8)
-
-        lbl_comp_title = QLabel("VERIFIED HARNESS COMPONENTS")
-        lbl_comp_title.setStyleSheet(f"font-size: 10px; font-weight: 700; color: {palette.text_muted}; letter-spacing: 0.6px;")
-        cb_layout.addWidget(lbl_comp_title)
-
-        self.lbl_path_script = QLabel("—")
-        self.lbl_path_clf = QLabel("—")
-        self.lbl_path_task = QLabel("—")
-        self.lbl_path_folder = QLabel("—")
-
-        for lbl in (self.lbl_path_script, self.lbl_path_clf, self.lbl_path_task, self.lbl_path_folder):
-            lbl.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; font-family: monospace;")
-            cb_layout.addWidget(lbl)
-
-        lc_layout.addWidget(components_box)
-
-        # Live Translation Guide & Keyboard Controls
-        guide_box = QFrame()
-        guide_box.setStyleSheet(f"""
+        # Interactive Sentence Bar & Shortcuts Card
+        self.sentence_card = QFrame()
+        self.sentence_card.setStyleSheet(f"""
             QFrame {{
                 background-color: {palette.bg_sidebar};
                 border: 1px solid {palette.border_default};
                 border-radius: 8px;
-                padding: 16px;
+                padding: 10px 14px;
             }}
         """)
-        gb_layout = QVBoxLayout(guide_box)
-        gb_layout.setSpacing(10)
+        sc_layout = QHBoxLayout(self.sentence_card)
+        sc_layout.setContentsMargins(6, 4, 6, 4)
+        sc_layout.setSpacing(12)
 
-        gb_title = QLabel("Native High-Performance Recognition Engine")
-        gb_title.setStyleSheet(f"font-size: 13.5px; font-weight: 700; color: {palette.text_primary};")
-        gb_desc = QLabel(
-            "Clicking 'Start Translation' runs predict_live.py natively with full 60 FPS performance, "
-            "standard green landmark connections, red keypoint dots, dynamic gesture tracking (J & Z), "
-            "and live sentence formation. No extra overhead or performance lag."
-        )
-        gb_desc.setStyleSheet(f"font-size: 12px; color: {palette.text_secondary}; line-height: 1.45;")
-        gb_desc.setWordWrap(True)
+        lbl_sent_tag = QLabel("ACCUMULATED SENTENCE:")
+        lbl_sent_tag.setStyleSheet(f"font-size: 10px; font-weight: 800; color: {palette.text_muted}; letter-spacing: 0.6px;")
 
-        gb_shortcuts = QLabel(
-            "Native Window Controls:  [SPACE] Add Letter to Sentence  |  [BACKSPACE] Delete  |  "
-            "[C] Clear  |  [R] Toggle 720p/1080p  |  [TAB] Switch Camera  |  [Q] Exit Window"
-        )
-        gb_shortcuts.setStyleSheet(f"font-size: 11px; font-weight: 600; color: {palette.accent_label};")
+        self.sentence_display = QLabel("—")
+        self.sentence_display.setStyleSheet(f"font-size: 15px; font-weight: 700; color: {palette.accent_label};")
+        self.sentence_display.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
-        gb_layout.addWidget(gb_title)
-        gb_layout.addWidget(gb_desc)
-        gb_layout.addWidget(gb_shortcuts)
-        lc_layout.addWidget(guide_box)
+        # Interactive action buttons
+        self.btn_add_letter = QPushButton(" ␣ Space / Commit")
+        self.btn_add_letter.setProperty("class", "secondaryBtn")
+        self.btn_add_letter.clicked.connect(self._on_space_pressed)
 
-        self.main_content_layout.addWidget(self.loaded_card)
-        root_layout.addWidget(self.main_content_frame, 1)
+        self.btn_backspace = QPushButton(" ⌫ Delete")
+        self.btn_backspace.setProperty("class", "secondaryBtn")
+        self.btn_backspace.clicked.connect(self._on_backspace_pressed)
+
+        self.btn_clear = QPushButton(" ✕ Clear")
+        self.btn_clear.setProperty("class", "secondaryBtn")
+        self.btn_clear.clicked.connect(self._on_clear_pressed)
+
+        self.btn_copy = QPushButton(" 📋 Copy")
+        self.btn_copy.setProperty("class", "secondaryBtn")
+        self.btn_copy.clicked.connect(self._copy_sentence_to_clipboard)
+
+        sc_vbox = QVBoxLayout()
+        sc_vbox.setSpacing(2)
+        sc_vbox.addWidget(lbl_sent_tag)
+        sc_vbox.addWidget(self.sentence_display)
+
+        sc_layout.addLayout(sc_vbox, 1)
+        sc_layout.addWidget(self.btn_add_letter)
+        sc_layout.addWidget(self.btn_backspace)
+        sc_layout.addWidget(self.btn_clear)
+        sc_layout.addWidget(self.btn_copy)
+
+        lc_layout.addWidget(self.sentence_card)
+
+        self.central_stack_layout.addWidget(self.empty_state_box) # Index 0
+        self.central_stack_layout.addWidget(self.live_container)   # Index 1
+
+        root_layout.addWidget(self.central_stack, 1)
 
     def _connect_signals(self):
         self._model_registry.package_added.connect(self._on_package_added)
         self._model_registry.active_package_changed.connect(self._on_active_package_changed)
+
+    def _populate_cameras(self):
+        self.camera_combo.blockSignals(True)
+        self.camera_combo.clear()
+        cameras = get_available_cameras()
+        for idx, name in enumerate(cameras):
+            self.camera_combo.addItem(f"📷 [{idx}] {name}", userData=idx)
+        self.camera_combo.blockSignals(False)
 
     def _populate_models(self):
         self.model_combo.blockSignals(True)
@@ -249,8 +268,7 @@ class PredictPage(QWidget):
             self.model_combo.addItem("No models detected — Click + Add Model", userData="")
             self.action_btn.setEnabled(False)
             self.status_pill.set_status("No Models Detected", "neutral")
-            self.empty_state_box.setVisible(True)
-            self.loaded_card.setVisible(False)
+            self.central_stack_layout.setCurrentWidget(self.empty_state_box)
             self.model_combo.blockSignals(False)
             return
 
@@ -263,22 +281,8 @@ class PredictPage(QWidget):
 
         self.model_combo.setCurrentIndex(active_idx)
         self.action_btn.setEnabled(True)
-        self.empty_state_box.setVisible(False)
-        self.loaded_card.setVisible(True)
-        self._update_loaded_model_view(active or packages[0])
+        self.central_stack_layout.setCurrentWidget(self.live_container)
         self.model_combo.blockSignals(False)
-
-    def _update_loaded_model_view(self, pkg: ModelPackage):
-        self.lbl_active_name.setText(pkg.name)
-        if pkg.is_developer:
-            self.model_type_badge.setText("DEVELOPER MODEL SUITE (TRAINING + INFERENCE)")
-        else:
-            self.model_type_badge.setText("USER MODEL (INFERENCE ONLY)")
-
-        self.lbl_path_script.setText(f"• Predict Script: {Path(pkg.predict_script).name} (Verified)")
-        self.lbl_path_clf.setText(f"• Classifier:     {Path(pkg.classifier_path).name} (Verified)")
-        self.lbl_path_task.setText(f"• Landmarker:     {Path(pkg.task_path).name} (Verified)")
-        self.lbl_path_folder.setText(f"• Package Folder: {pkg.folder_path}")
 
         if not self._is_translating:
             self.status_pill.set_status("Native Engine Ready", "active")
@@ -296,7 +300,10 @@ class PredictPage(QWidget):
         pkg = self._model_registry.get_package(pkg_id)
         if pkg:
             self._model_registry.set_active_package(pkg_id)
-            self._update_loaded_model_view(pkg)
+            # If translating, restart engine with the new model
+            if self._is_translating:
+                self._stop_translation()
+                self._start_translation()
 
     def _on_package_added(self, package: ModelPackage):
         self._populate_models()
@@ -312,7 +319,10 @@ class PredictPage(QWidget):
                 self.model_combo.setCurrentIndex(i)
                 self.model_combo.blockSignals(False)
                 break
-        self._update_loaded_model_view(package)
+
+        self.central_stack_layout.setCurrentWidget(self.live_container)
+        if not self._is_translating:
+            self.status_pill.set_status("Native Engine Ready", "active")
 
     def _open_add_model_dialog(self):
         dlg = AddModelDialog(self)
@@ -343,67 +353,112 @@ class PredictPage(QWidget):
             QMessageBox.warning(self, "No Model Selected", "Please import a model folder first using '+ Add Model'.")
             return
 
-        predict_path = active_pkg.predict_script
-        if not os.path.exists(predict_path):
-            QMessageBox.critical(self, "Script Missing", f"Could not find predict_live.py at:\n{predict_path}")
+        if not os.path.exists(active_pkg.classifier_path):
+            QMessageBox.critical(self, "Classifier Missing", f"Could not find classifier at:\n{active_pkg.classifier_path}")
             return
 
-        try:
-            # Stop any camera preview inside Qt to guarantee exclusive, zero-lag camera access
-            if self._camera_manager and self._camera_manager.is_previewing:
-                self._camera_manager.stop_preview()
+        if not os.path.exists(active_pkg.task_path):
+            QMessageBox.critical(self, "MediaPipe Task Missing", f"Could not find hand_landmarker.task at:\n{active_pkg.task_path}")
+            return
 
-            # Launch native predict_live.py process directly in its own directory
-            # Full 60 FPS, green landmark skeleton (0, 255, 0), red dots, native HUD, zero lag
-            self._proc = subprocess.Popen(
-                [sys.executable, predict_path],
-                cwd=active_pkg.folder_path
-            )
-            self._is_translating = True
-            self.action_btn.setText(" Stop Translation")
-            self.action_btn.setProperty("class", "dangerBtn")
-            self.action_btn.setIcon(get_icon("stop", "#FFFFFF", size=15))
-            self.status_pill.set_status(f"Live Window Running (PID {self._proc.pid})", "active")
-            self._apply_button_style()
+        # Ensure internal camera manager preview is stopped to prevent exclusive camera lock
+        if self._camera_manager and self._camera_manager.is_previewing:
+            self._camera_manager.stop_preview()
 
-            # Poll for process termination
-            self._proc_timer.start(500)
-        except Exception as e:
-            QMessageBox.critical(self, "Launch Error", f"Failed to launch native predict_live.py:\n{str(e)}")
+        cam_idx = self.camera_combo.currentData()
+        if cam_idx is None:
+            cam_idx = 0
+
+        # Instantiate background native inference worker
+        self._worker = NativeInferenceWorker(
+            classifier_path=active_pkg.classifier_path,
+            task_path=active_pkg.task_path,
+            camera_index=cam_idx,
+            parent=self
+        )
+
+        self._worker.frame_ready.connect(self.camera_canvas.update_frame)
+        self._worker.sentence_changed.connect(self._on_sentence_updated)
+        self._worker.error_occurred.connect(self._on_worker_error)
+        self._worker.engine_stopped.connect(self._on_worker_stopped)
+
+        self._worker.start()
+        self._is_translating = True
+
+        palette = ThemeManager.get_palette()
+        self.action_btn.setText(" Stop Translation")
+        self.action_btn.setProperty("class", "dangerBtn")
+        self.action_btn.setIcon(get_icon("stop", "#FFFFFF", size=15))
+        self.status_pill.set_status("Translating (60 FPS)", "active")
+        self._apply_button_style()
+
+        # Canvas grabs focus so SPACE and BACKSPACE work immediately
+        self.camera_canvas.setFocus()
 
     def _stop_translation(self):
-        if self._proc is not None:
-            try:
-                self._proc.terminate()
-            except Exception:
-                pass
-            self._proc = None
+        if self._worker is not None:
+            self._worker.stop()
+            self._worker = None
 
-        self._proc_timer.stop()
         self._is_translating = False
+        self.camera_canvas.clear()
 
         palette = ThemeManager.get_palette()
         btn_text_color = "#1C1917" if not palette.is_dark else "#161513"
 
         self.action_btn.setText(" Start Translation")
         self.action_btn.setProperty("class", "primaryBtn")
-        self.action_btn.setIcon(get_icon("play", btn_text_color, size=16))
+        self.action_btn.setIcon(get_icon("play", btn_text_color, size=15))
         self.status_pill.set_status("Native Engine Ready", "active" if self._model_registry.get_all_packages() else "neutral")
         self._apply_button_style()
 
-    def _check_proc_status(self):
-        if self._proc is not None:
-            ret = self._proc.poll()
-            if ret is not None:
-                # Native window was closed (e.g. user pressed 'Q')
-                self._stop_translation()
+    @Slot(str)
+    def _on_sentence_updated(self, text: str):
+        self._current_sentence = text
+        self.sentence_display.setText(text if text else "—")
+
+    @Slot(str)
+    def _on_worker_error(self, err_msg: str):
+        QMessageBox.critical(self, "Inference Engine Error", err_msg)
+        self._stop_translation()
+
+    @Slot()
+    def _on_worker_stopped(self):
+        if self._is_translating:
+            self._stop_translation()
+
+    def _on_space_pressed(self):
+        if self._worker is not None:
+            self._worker.commit_current_letter()
+            # If current stable prediction was committed, also add a space if user pressed space again
+            # worker handles appending stable letter or space
+
+    def _on_backspace_pressed(self):
+        if self._worker is not None:
+            self._worker.backspace()
+
+    def _on_clear_pressed(self):
+        if self._worker is not None:
+            self._worker.clear_sentence()
+        else:
+            self.sentence_display.setText("—")
+
+    def _copy_sentence_to_clipboard(self):
+        clipboard = QApplication.clipboard()
+        text = self.sentence_display.text()
+        if text and text != "—":
+            clipboard.setText(text)
+            self.status_pill.set_status("Sentence Copied!", "active")
+            QTimer.singleShot(2000, lambda: self.status_pill.set_status(
+                "Translating (60 FPS)" if self._is_translating else "Native Engine Ready", "active"
+            ))
 
     def _apply_button_style(self):
         self.action_btn.style().unpolish(self.action_btn)
         self.action_btn.style().polish(self.action_btn)
-
-    def on_page_activated(self):
-        self._populate_models()
+        self.action_btn.update()
 
     def on_page_deactivated(self):
-        pass
+        """Called by MainWindow when navigating away from this page."""
+        if self._is_translating:
+            self._stop_translation()
