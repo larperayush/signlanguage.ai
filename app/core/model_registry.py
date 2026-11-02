@@ -59,7 +59,7 @@ class ModelEntry:
     previous_reference: Optional[Dict[str, Any]] = None
 
 
-def detect_model_in_folder(folder_path: str) -> Dict[str, Any]:
+def detect_model_in_folder(folder_path: str, extract_classes: bool = False) -> Dict[str, Any]:
     """
     Inspect a folder to determine whether it is a User Model or Developer Model.
     
@@ -165,17 +165,18 @@ def detect_model_in_folder(folder_path: str) -> Dict[str, Any]:
     badge_label = "Developer Suite" if is_developer else "User Model"
     suggested_name = f"{root.name} [{badge_label}]"
 
-    # Extract class labels safely if possible
+    # Extract class labels safely if requested (defaults to False to avoid blocking GUI)
     classes: List[str] = []
-    try:
-        import joblib
-        clf = joblib.load(str(classifier_path))
-        if hasattr(clf, "classes_"):
-            classes = [str(c) for c in clf.classes_]
-        elif isinstance(clf, dict) and "classes_" in clf:
-            classes = [str(c) for c in clf["classes_"]]
-    except Exception:
-        pass
+    if extract_classes:
+        try:
+            import joblib
+            clf = joblib.load(str(classifier_path))
+            if hasattr(clf, "classes_"):
+                classes = [str(c) for c in clf.classes_]
+            elif isinstance(clf, dict) and "classes_" in clf:
+                classes = [str(c) for c in clf["classes_"]]
+        except Exception:
+            pass
 
     return {
         "is_valid": True,

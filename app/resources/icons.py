@@ -213,6 +213,9 @@ SVG_PATHS = {
     ),
 }
 
+_PIXMAP_CACHE = {}
+_ICON_CACHE = {}
+
 def get_svg_markup(name: str, color: str = "#94A3B8", stroke_width: float = 2.0) -> str:
     path_data = SVG_PATHS.get(name, SVG_PATHS["info"])
     return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" 
@@ -222,6 +225,10 @@ def get_svg_markup(name: str, color: str = "#94A3B8", stroke_width: float = 2.0)
             </svg>"""
 
 def get_pixmap(name: str, color: str = "#94A3B8", size: int = 20, stroke_width: float = 2.0) -> QPixmap:
+    cache_key = (name, color, size, stroke_width)
+    if cache_key in _PIXMAP_CACHE:
+        return _PIXMAP_CACHE[cache_key]
+
     svg_data = get_svg_markup(name, color, stroke_width)
     renderer = QSvgRenderer(QByteArray(svg_data.encode("utf-8")))
     pixmap = QPixmap(size, size)
@@ -229,9 +236,14 @@ def get_pixmap(name: str, color: str = "#94A3B8", size: int = 20, stroke_width: 
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
+    _PIXMAP_CACHE[cache_key] = pixmap
     return pixmap
 
 def get_icon(name: str, color: str = "#94A3B8", active_color: str = "#5E6AD2", size: int = 20) -> QIcon:
+    cache_key = (name, color, active_color, size)
+    if cache_key in _ICON_CACHE:
+        return _ICON_CACHE[cache_key]
+
     normal_pixmap = get_pixmap(name, color, size)
     icon = QIcon()
     icon.addPixmap(normal_pixmap, QIcon.Mode.Normal)
@@ -240,4 +252,5 @@ def get_icon(name: str, color: str = "#94A3B8", active_color: str = "#5E6AD2", s
         active_pixmap = get_pixmap(name, active_color, size)
         icon.addPixmap(active_pixmap, QIcon.Mode.Active)
         icon.addPixmap(active_pixmap, QIcon.Mode.Selected)
+    _ICON_CACHE[cache_key] = icon
     return icon

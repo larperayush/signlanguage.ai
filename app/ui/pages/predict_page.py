@@ -37,16 +37,24 @@ from app.ui.components.embedded_camera_canvas import EmbeddedCameraCanvas
 __all__ = ["PredictPage", "CameraPreviewWidget", "CameraSettingsDialog"]
 
 
-def get_available_cameras() -> List[str]:
-    """Discover available physical and virtual webcams on Windows."""
+_CACHED_CAMERAS: Optional[List[str]] = None
+
+def get_available_cameras(force_refresh: bool = False) -> List[str]:
+    """Discover available physical and virtual webcams on Windows with caching."""
+    global _CACHED_CAMERAS
+    if _CACHED_CAMERAS is not None and not force_refresh:
+        return _CACHED_CAMERAS
     try:
         from pygrabber.dshow_graph import FilterGraph
         devices = FilterGraph().get_input_devices()
         if devices:
+            _CACHED_CAMERAS = devices
             return devices
     except Exception:
         pass
-    return ["Camera Index 0", "Camera Index 1"]
+    fallback = ["Camera Index 0", "Camera Index 1"]
+    _CACHED_CAMERAS = fallback
+    return fallback
 
 
 class PredictPage(QWidget):
