@@ -1,8 +1,13 @@
 """
 Application configuration, paths, and persistent settings management.
 """
+import os
+import tempfile
 from pathlib import Path
 from PySide6.QtCore import QSettings
+
+# Silence matplotlib cache dir warning on systems where user dir has restricted permissions
+os.environ.setdefault("MPLCONFIGDIR", os.path.join(tempfile.gettempdir(), "matplotlib"))
 
 APP_NAME = "SignFlow Studio"
 APP_DISPLAY_NAME = "Sign Language Recognition Studio"

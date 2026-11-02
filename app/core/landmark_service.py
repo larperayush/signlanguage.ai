@@ -304,20 +304,6 @@ class LandmarkService(QObject):
             if cam_mgr and cam_mgr._video_widget and hasattr(cam_mgr._video_widget, "clear_landmarks"):
                 cam_mgr._video_widget.clear_landmarks()
 
-        if payload is not None:
-            # Attach current camera FPS
-            cam_mgr = CameraManager.get_instance()
-            cam_fps = cam_mgr.current_fps if cam_mgr else 0.0
-            payload["camera_fps"] = cam_fps
-
-            self._latest_payload = payload
-
-            # Automatically deliver landmarks to the currently bound preview widget
-            if cam_mgr and cam_mgr._video_widget and hasattr(cam_mgr._video_widget, "set_landmarks"):
-                cam_mgr._video_widget.set_landmarks(payload)
-
-            self.landmarks_updated.emit(payload)
-
     @Slot()
     def _on_preview_stopped(self):
         """Camera preview halted; clear stale landmarks immediately."""

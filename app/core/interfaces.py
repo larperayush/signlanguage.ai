@@ -181,7 +181,7 @@ class DynamicRecordingInterface(QObject):
     def discard_sequence(self, seq_id: str) -> bool:
         raise NotImplementedError
 
-    def is_recording() -> bool:
+    def is_recording(self) -> bool:
         return False
 
     def is_connected(self) -> bool:

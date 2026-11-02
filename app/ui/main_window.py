@@ -4,6 +4,7 @@ Integrates Sidebar, TopBar, and Stacked Page Workspaces.
 Provides native window resizing, minimize/maximize/close, and safe cleanup.
 """
 from pathlib import Path
+from typing import Optional, Any
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget, QApplication
 )
