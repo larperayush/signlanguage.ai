@@ -215,7 +215,7 @@ class NeuralNetworkPage(QWidget):
 
         hud_layout.addStretch()
 
-        self.lbl_hud_progression = QLabel("Input (63) ➔ Hidden 1 ➔ Hidden 2 ➔ Output (6)")
+        self.lbl_hud_progression = QLabel("Input (63) ➔ Hidden 1 (64) ➔ Hidden 2 (32) ➔ Output (26 Signs)")
         self.lbl_hud_progression.setStyleSheet(f"font-size: 11px; color: {palette.text_muted}; font-family: monospace;")
         hud_layout.addWidget(self.lbl_hud_progression)
 
