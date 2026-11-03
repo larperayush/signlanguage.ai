@@ -83,6 +83,10 @@ cd signlanguage.ai
 pip install -r requirements.txt
 ```
 
+> **Note for Snapdragon / Windows on ARM Users (e.g. Samsung Galaxy Book4 Edge, Surface Pro 11):**  
+> Computer vision libraries like OpenCV and MediaPipe publish official pre-compiled Windows binaries for x86_64. On Windows ARM devices, install the official [Windows 64-bit (x86_64) Python installer](https://www.python.org/ftp/python/3.12.9/python-3.12.9-amd64.exe). Windows will automatically run it through its built-in high-speed Prism emulation layer, and pip install -r requirements.txt will succeed in seconds with zero compilation!
+
+
 ### 2. Running the Application
 Double-click `run.bat` or run via terminal:
 ```bash
