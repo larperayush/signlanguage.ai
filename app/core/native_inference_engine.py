@@ -1,21 +1,15 @@
 """
-Native Inference & HUD Rendering Engine for SignFlow Studio.
-Directly embeds the 60 FPS OpenCV + MediaPipe + Scikit-Learn prediction pipeline
-from predict_live.py inside a high-performance Qt QThread worker.
-
-Features:
-- Threaded non-blocking webcam capture (DirectShow / MJPG 60 FPS)
-- MediaPipe HandLandmarker with 640px subsampling for ultra-low latency
-- Real-time skeleton drawing: Green bone lines (0, 255, 0) and Red dots (0, 0, 255)
-- Dynamic trajectory recognition: Yellow active stroke trails, Purple locked trails (J & Z)
-- Sleek glassmorphic HUD: Sentence Bar, Predicted Sign, Confidence %, Camera FPS
-- Direct QImage emission for seamless Qt widget embedding
-- Automatic Virtual Camera broadcasting (Discord, Zoom, Google Meet)
+SignFlow Studio - Native Inference Engine
+Real-time MediaPipe Hand Landmarks & 26-Class ASL Gesture Classification.
+Ports full predict_live.py geometric disambiguation, trajectory tracking,
+and real-time glassmorphic HUD overlay to high-performance PySide6 QThread.
 """
+
 import os
 import sys
 import time
 import math
+from collections import deque
 import cv2
 import joblib
 import numpy as np
@@ -38,15 +32,12 @@ CONNECTIONS = [
     (0, 17)
 ]
 
-RESAMPLE_POINTS = 16
-MIN_STEP_DIST = 0.006
-
-STATE_WAIT_STEADY = 0
-STATE_ARMED = 1
-STATE_DRAWING = 2
-
 
 def extract_features(landmarks):
+    """
+    Extract wrist-relative, scale-normalized 3D coordinates (63 features).
+    Exactly matches the model's training pipeline.
+    """
     wrist = landmarks[0]
     raw_coords = []
     for lm in landmarks:
@@ -55,68 +46,255 @@ def extract_features(landmarks):
     return [val / scale for val in raw_coords]
 
 
-def path_arc_length(points):
-    if len(points) < 2:
-        return 0.0
-    return sum(
-        math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
-        for i in range(1, len(points))
-    )
+def disambiguate_r_u_v(landmarks):
+    """
+    Geometrically separates R, U, and V using physical ASL invariants:
+    - R: Index and middle fingers crossed (inversion of finger axis or ratio <= 0.65).
+    - V: Index and middle fingers spread apart (ratio >= 1.25 or diverging angle cos < 0.96).
+    - U: Index and middle fingers touching and parallel side-by-side (ratio < 1.25 and cos >= 0.95).
+    """
+    dx_tip = landmarks[8].x - landmarks[12].x
+    dy_tip = landmarks[8].y - landmarks[12].y
+    dz_tip = landmarks[8].z - landmarks[12].z
+    d_tips = math.sqrt(dx_tip * dx_tip + dy_tip * dy_tip + dz_tip * dz_tip)
+
+    dx_mcp = landmarks[5].x - landmarks[9].x
+    dy_mcp = landmarks[5].y - landmarks[9].y
+    dz_mcp = landmarks[5].z - landmarks[9].z
+    d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
+
+    ratio = d_tips / d_mcp
+    cross_prod = dx_tip * dx_mcp
+
+    idx_vx = landmarks[8].x - landmarks[6].x
+    idx_vy = landmarks[8].y - landmarks[6].y
+    idx_vz = landmarks[8].z - landmarks[6].z
+    mag_idx = max(math.sqrt(idx_vx * idx_vx + idx_vy * idx_vy + idx_vz * idx_vz), 1e-6)
+
+    mid_vx = landmarks[12].x - landmarks[10].x
+    mid_vy = landmarks[12].y - landmarks[10].y
+    mid_vz = landmarks[12].z - landmarks[10].z
+    mag_mid = max(math.sqrt(mid_vx * mid_vx + mid_vy * mid_vy + mid_vz * mid_vz), 1e-6)
+
+    cos_spread = (idx_vx * mid_vx + idx_vy * mid_vy + idx_vz * mid_vz) / (mag_idx * mag_mid)
+
+    if cross_prod < 0 or ratio <= 0.65:
+        return "R"
+    elif ratio >= 1.25 or (cos_spread < 0.96 and ratio >= 1.05):
+        return "V"
+    else:
+        return "U"
 
 
-def resample_and_normalize_path(points, target_count=RESAMPLE_POINTS):
-    if not points:
-        return [0.0] * (target_count * 2)
+def disambiguate_e_o(landmarks):
+    """
+    Separates E and O:
+    - E: Fingertips are curled tightly against knuckle/palm (idx_ext < 2.30).
+    - O: Fingers arch forward forming an open circular loop (idx_ext >= 2.30).
+    """
+    dx_mcp = landmarks[5].x - landmarks[9].x
+    dy_mcp = landmarks[5].y - landmarks[9].y
+    dz_mcp = landmarks[5].z - landmarks[9].z
+    d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
 
-    dists = [0.0]
-    for i in range(1, len(points)):
-        d = math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1])
-        dists.append(dists[-1] + d)
+    dx = landmarks[8].x - landmarks[5].x
+    dy = landmarks[8].y - landmarks[5].y
+    dz = landmarks[8].z - landmarks[5].z
+    idx_ext = math.sqrt(dx * dx + dy * dy + dz * dz) / d_mcp
 
-    total_dist = dists[-1]
-    if total_dist < 1e-6:
-        return [0.0] * (target_count * 2)
-
-    step = total_dist / (target_count - 1)
-    resampled = [points[0]]
-
-    for i in range(1, target_count - 1):
-        target = i * step
-        idx = 0
-        while idx < len(dists) - 2 and dists[idx + 1] < target:
-            idx += 1
-        seg_len = dists[idx + 1] - dists[idx]
-        if seg_len < 1e-6:
-            rx, ry = points[idx]
-        else:
-            ratio = (target - dists[idx]) / seg_len
-            rx = points[idx][0] + ratio * (points[idx + 1][0] - points[idx][0])
-            ry = points[idx][1] + ratio * (points[idx + 1][1] - points[idx][1])
-        resampled.append((rx, ry))
-
-    resampled.append(points[-1])
-
-    ox, oy = resampled[0]
-    rel_coords = []
-    for rx, ry in resampled:
-        rel_coords.extend([rx - ox, ry - oy])
-
-    max_abs = max(max(abs(v) for v in rel_coords), 1e-6)
-    return [v / max_abs for v in rel_coords]
+    return "E" if idx_ext < 2.30 else "O"
 
 
-def build_dynamic_feature_vector(index_path, pinky_path, pose_list):
-    norm_index = resample_and_normalize_path(index_path, RESAMPLE_POINTS)
-    norm_pinky = resample_and_normalize_path(pinky_path, RESAMPLE_POINTS)
-    mean_pose = np.mean(np.array(pose_list, dtype=np.float64), axis=0)
-    max_pose = max(np.max(np.abs(mean_pose)), 1e-6)
-    norm_pose = (mean_pose / max_pose).tolist()
-    return norm_index + norm_pinky + norm_pose
+def disambiguate_g_h(landmarks):
+    """
+    Separates G and H:
+    - G: Only index finger extended horizontally; middle finger curled (mid_ext/idx_ext < 0.82).
+    - H: Both index and middle fingers extended parallel together (mid_ext/idx_ext >= 0.82, d_tips < 1.45, mid_ext >= 1.50).
+    """
+    dx_mcp = landmarks[5].x - landmarks[9].x
+    dy_mcp = landmarks[5].y - landmarks[9].y
+    dz_mcp = landmarks[5].z - landmarks[9].z
+    d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
+
+    dx_idx = landmarks[8].x - landmarks[5].x
+    dy_idx = landmarks[8].y - landmarks[5].y
+    dz_idx = landmarks[8].z - landmarks[5].z
+    idx_ext = math.sqrt(dx_idx * dx_idx + dy_idx * dy_idx + dz_idx * dz_idx) / d_mcp
+
+    dx_mid = landmarks[12].x - landmarks[9].x
+    dy_mid = landmarks[12].y - landmarks[9].y
+    dz_mid = landmarks[12].z - landmarks[9].z
+    mid_ext = math.sqrt(dx_mid * dx_mid + dy_mid * dy_mid + dz_mid * dz_mid) / d_mcp
+
+    dx_tips = landmarks[8].x - landmarks[12].x
+    dy_tips = landmarks[8].y - landmarks[12].y
+    dz_tips = landmarks[8].z - landmarks[12].z
+    d_tips = math.sqrt(dx_tips * dx_tips + dy_tips * dy_tips + dz_tips * dz_tips) / d_mcp
+
+    if (mid_ext / max(idx_ext, 1e-6) >= 0.82) and (d_tips < 1.45) and (mid_ext >= 1.50):
+        return "H"
+    return "G"
+
+
+def disambiguate_d_l(landmarks):
+    """
+    Separates D and L:
+    - Both have index finger extended straight up (idx_ext >= 1.45, index tip highest).
+    - L: Thumb extended outward laterally (90 degrees), away from index knuckle and curled fingers.
+    - D: Thumb curled inward touching or closing loop against middle/ring fingertip.
+    """
+    dx_mcp = landmarks[5].x - landmarks[9].x
+    dy_mcp = landmarks[5].y - landmarks[9].y
+    dz_mcp = landmarks[5].z - landmarks[9].z
+    d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
+
+    dx_tm = landmarks[4].x - landmarks[12].x
+    dy_tm = landmarks[4].y - landmarks[12].y
+    dz_tm = landmarks[4].z - landmarks[12].z
+    thumb_mid = math.sqrt(dx_tm * dx_tm + dy_tm * dy_tm + dz_tm * dz_tm) / d_mcp
+
+    dx_tr = landmarks[4].x - landmarks[16].x
+    dy_tr = landmarks[4].y - landmarks[16].y
+    dz_tr = landmarks[4].z - landmarks[16].z
+    thumb_ring = math.sqrt(dx_tr * dx_tr + dy_tr * dy_tr + dz_tr * dz_tr) / d_mcp
+
+    dx_thumb = abs(landmarks[4].x - landmarks[5].x) / d_mcp
+
+    if dx_thumb >= 1.35 and thumb_mid >= 1.35 and thumb_ring >= 1.25:
+        return "L", dx_thumb
+    return "D", min(thumb_mid, thumb_ring)
+
+
+def disambiguate_x_z(landmarks):
+    """
+    Separates X and Z:
+    - In X: Closed fist with index finger hooked/bent like a pirate hook.
+    - In Z: Index finger extended straight out pointing.
+    """
+    dx_mcp = landmarks[5].x - landmarks[9].x
+    dy_mcp = landmarks[5].y - landmarks[9].y
+    dz_mcp = landmarks[5].z - landmarks[9].z
+    d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
+
+    dx_idx = landmarks[8].x - landmarks[5].x
+    dy_idx = landmarks[8].y - landmarks[5].y
+    dz_idx = landmarks[8].z - landmarks[5].z
+    idx_ext = math.sqrt(dx_idx * dx_idx + dy_idx * dy_idx + dz_idx * dz_idx) / d_mcp
+
+    u_x = landmarks[6].x - landmarks[5].x
+    u_y = landmarks[6].y - landmarks[5].y
+    u_z = landmarks[6].z - landmarks[5].z
+    mag_u = max(math.sqrt(u_x * u_x + u_y * u_y + u_z * u_z), 1e-6)
+
+    v_x = landmarks[8].x - landmarks[6].x
+    v_y = landmarks[8].y - landmarks[6].y
+    v_z = landmarks[8].z - landmarks[6].z
+    mag_v = max(math.sqrt(v_x * v_x + v_y * v_y + v_z * v_z), 1e-6)
+
+    cos_hook = (u_x * v_x + u_y * v_y + u_z * v_z) / (mag_u * mag_v)
+
+    if cos_hook < 0.65 or idx_ext < 1.45:
+        return "X", cos_hook
+    else:
+        return "Z", cos_hook
+
+
+def detect_silent_z_stroke(index_history):
+    """
+    Robust ASL 'Z' dynamic trajectory recognition:
+    - Analyzes index fingertip (Landmark 8) over recent history.
+    - Requires horizontal stroke -> diagonal down stroke -> horizontal stroke.
+    - Rejects stationary hand tremors and non-Z motions.
+    """
+    if len(index_history) < 8:
+        return False
+
+    pts = [(pt[1], pt[2]) for pt in index_history]
+    ts = [pt[0] for pt in index_history]
+
+    dt = ts[-1] - ts[0]
+    if dt < 0.15 or dt > 1.6:
+        return False
+
+    arc_length = sum(math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]) for i in range(1, len(pts)))
+    if arc_length < 0.07:
+        return False
+
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+
+    dx_span = max(xs) - min(xs)
+    dy_span = max(ys) - min(ys)
+
+    if dx_span < 0.035 or dy_span < 0.035:
+        return False
+
+    n = len(pts)
+    s_xs = [(xs[max(0, i - 1)] + xs[i] + xs[min(n - 1, i + 1)]) / 3.0 for i in range(n)]
+
+    best_zigzag = False
+    for s1 in [int(n * 0.28), int(n * 0.33), int(n * 0.38)]:
+        for s2 in [int(n * 0.62), int(n * 0.67), int(n * 0.72)]:
+            if s1 < s2:
+                d1 = s_xs[s1] - s_xs[0]
+                d2 = s_xs[s2] - s_xs[s1]
+                d3 = s_xs[-1] - s_xs[s2]
+                if (d1 * d2 < -0.0002) and (d2 * d3 < -0.0002) and (abs(d1) >= 0.02 and abs(d2) >= 0.02 and abs(d3) >= 0.02):
+                    best_zigzag = True
+                    break
+        if best_zigzag:
+            break
+
+    downward = (max(ys[n // 2:]) - min(ys[:n // 2])) >= 0.025
+    return best_zigzag and downward
+
+
+def detect_silent_j_hook(pinky_history):
+    """
+    Robust ASL 'J' trajectory recognition:
+    - Analyzes the pinky tip (Landmark 20) over recent history.
+    - Requires a distinct downward plunge followed by a sideways and upward hook.
+    - Stationary jitter, straight downward drops, and waving are rejected.
+    """
+    if len(pinky_history) < 8:
+        return False
+
+    pts = [(pt[1], pt[2]) for pt in pinky_history]
+    ts = [pt[0] for pt in pinky_history]
+
+    dt_total = ts[-1] - ts[0]
+    if dt_total < 0.12:
+        return False
+
+    ys = [p[1] for p in pts]
+    xs = [p[0] for p in pts]
+
+    trough_idx = max(range(len(ys)), key=lambda i: ys[i])
+
+    if trough_idx >= len(ys) - 1 or trough_idx < 3:
+        return False
+
+    y_trough = ys[trough_idx]
+    y_start = min(ys[:trough_idx])
+    downward_stroke = (y_trough - y_start) >= 0.045
+
+    y_after = ys[-1]
+    hook_up = (y_trough - y_after) >= 0.012
+
+    x_after = xs[-1]
+    x_trough = xs[trough_idx]
+    hook_sideways = abs(x_after - x_trough) >= 0.016 or (max(xs[trough_idx:]) - min(xs[trough_idx:])) >= 0.016
+
+    start_idx = ys.index(y_start)
+    stroke_pts = pts[start_idx:]
+    arc_length = sum(math.hypot(stroke_pts[i][0] - stroke_pts[i - 1][0], stroke_pts[i][1] - stroke_pts[i - 1][1]) for i in range(1, len(stroke_pts)))
+
+    return downward_stroke and hook_up and hook_sideways and (arc_length >= 0.055)
 
 
 class NativeInferenceWorker(QThread):
     """
-    Dedicated QThread that runs the exact predict_live.py computer-vision loop
+    Dedicated QThread that runs the high-performance computer-vision loop
     and emits live annotated video frames and prediction metadata to Qt.
     """
     frame_ready = Signal(QImage)
@@ -157,17 +335,34 @@ class NativeInferenceWorker(QThread):
 
         try:
             loaded = joblib.load(self.classifier_path)
-            if isinstance(loaded, dict) and loaded.get("type") == "unified_asl_model":
-                static_clf = loaded["static_model"]
-                dynamic_clf = loaded.get("dynamic_model", None)
+            if isinstance(loaded, dict):
+                static_clf = loaded.get("static_model", loaded)
+                classes = list(loaded.get("classes", getattr(static_clf, "classes_", [])))
             else:
                 static_clf = loaded
-                dynamic_clf = None
+                classes = list(getattr(static_clf, "classes_", []))
+            static_clf.n_jobs = 1
         except Exception as e:
             self.error_occurred.emit(f"Failed to load classifier: {str(e)}")
             self._is_running = False
             self.engine_stopped.emit()
             return
+
+        # Pre-resolve class indices for ultra-fast frame lookup
+        r_idx = classes.index('R') if 'R' in classes else None
+        u_idx = classes.index('U') if 'U' in classes else None
+        v_idx = classes.index('V') if 'V' in classes else None
+        e_idx = classes.index('E') if 'E' in classes else None
+        o_idx = classes.index('O') if 'O' in classes else None
+        g_idx = classes.index('G') if 'G' in classes else None
+        h_idx = classes.index('H') if 'H' in classes else None
+        d_idx = classes.index('D') if 'D' in classes else None
+        l_idx = classes.index('L') if 'L' in classes else None
+        x_idx = classes.index('X') if 'X' in classes else None
+        z_idx = classes.index('Z') if 'Z' in classes else None
+        j_idx = classes.index('J') if 'J' in classes else None
+        i_idx = classes.index('I') if 'I' in classes else None
+        k_idx = classes.index('K') if 'K' in classes else None
 
         # 2. Initialize MediaPipe Detector in Video Mode
         try:
@@ -206,45 +401,27 @@ class NativeInferenceWorker(QThread):
             self.engine_stopped.emit()
             return
 
-        # Inference loop state
-        from collections import deque
-        prediction_buffer = deque(maxlen=8)
-        last_timestamp_ms = -1
-        prev_frame_time = time.time()
-        fps_smooth = 0.0
-
-        pen_state = STATE_WAIT_STEADY
-        prev_idx_pt = None
-        prev_pnk_pt = None
-        steady_frames = 0
-        stroke_pause_frames = 0
-
-        live_index_path = []
-        live_pinky_path = []
-        live_poses = []
-
-        dynamic_hold_label = None
-        dynamic_hold_conf = 0.0
-        dynamic_hold_until = 0.0
-        locked_trail_px = []
-
-        def reset_motion():
-            nonlocal pen_state, prev_idx_pt, prev_pnk_pt, steady_frames, stroke_pause_frames
-            pen_state = STATE_WAIT_STEADY
-            prev_idx_pt = None
-            prev_pnk_pt = None
-            steady_frames = 0
-            stroke_pause_frames = 0
-            live_index_path.clear()
-            live_pinky_path.clear()
-            live_poses.clear()
-
-        # Try to import VirtualCameraService for broadcasting
+        # Safe virtual camera reference
         try:
             from app.core.virtual_cam_service import VirtualCameraService
             vcam = VirtualCameraService.get_instance()
         except Exception:
             vcam = None
+
+        # Inference loop state
+        prediction_buffer = deque(maxlen=6)
+        pinky_history = deque(maxlen=24)
+        index_history = deque(maxlen=24)
+
+        z_hold_until = 0.0
+        z_cooldown_until = 0.0
+        j_hold_until = 0.0
+        j_cooldown_until = 0.0
+
+        last_timestamp_ms = -1
+        prev_frame_time = time.time()
+        fps_smooth = 0.0
+        smooth_conf = 0.0
 
         # 4. Main Inference & Rendering Loop
         while self._is_running:
@@ -253,9 +430,9 @@ class NativeInferenceWorker(QThread):
                 time.sleep(0.005)
                 continue
 
-            cur_time = time.time()
-            dt = cur_time - prev_frame_time
-            prev_frame_time = cur_time
+            curr_frame_time = time.time()
+            dt = curr_frame_time - prev_frame_time
+            prev_frame_time = curr_frame_time
             if dt > 0:
                 inst_fps = 1.0 / dt
                 fps_smooth = inst_fps if fps_smooth == 0.0 else (fps_smooth * 0.9 + inst_fps * 0.1)
@@ -295,126 +472,173 @@ class NativeInferenceWorker(QThread):
                 for pt in landmarks:
                     cv2.circle(frame, (int(pt.x * w), int(pt.y * h)), 4, (0, 0, 255), -1)
 
+                # Anatomical scale reference: palm width (Knuckle 5 to Knuckle 9)
+                dx_mcp = landmarks[5].x - landmarks[9].x
+                dy_mcp = landmarks[5].y - landmarks[9].y
+                dz_mcp = landmarks[5].z - landmarks[9].z
+                d_mcp = max(math.sqrt(dx_mcp * dx_mcp + dy_mcp * dy_mcp + dz_mcp * dz_mcp), 1e-6)
+
+                # Index extension (Knuckle 5 to Tip 8)
+                dx = landmarks[8].x - landmarks[5].x
+                dy = landmarks[8].y - landmarks[5].y
+                dz = landmarks[8].z - landmarks[5].z
+                idx_ext = math.sqrt(dx * dx + dy * dy + dz * dz) / d_mcp
+
+                # Middle extension (Knuckle 9 to Tip 12)
+                dx_mid = landmarks[12].x - landmarks[9].x
+                dy_mid = landmarks[12].y - landmarks[9].y
+                dz_mid = landmarks[12].z - landmarks[9].z
+                mid_ext = math.sqrt(dx_mid * dx_mid + dy_mid * dy_mid + dz_mid * dz_mid) / d_mcp
+
+                # Pinky extension (Knuckle 17 to Tip 20)
+                dx_p = landmarks[20].x - landmarks[17].x
+                dy_p = landmarks[20].y - landmarks[17].y
+                dz_p = landmarks[20].z - landmarks[17].z
+                pinky_ext = math.sqrt(dx_p * dx_p + dy_p * dy_p + dz_p * dz_p) / d_mcp
+
+                # Thumb spread from index knuckle
+                dx_t = landmarks[4].x - landmarks[5].x
+                dy_t = landmarks[4].y - landmarks[5].y
+                dz_t = landmarks[4].z - landmarks[5].z
+                thumb_idx = math.sqrt(dx_t * dx_t + dy_t * dy_t + dz_t * dz_t) / d_mcp
+
+                # Extract features for classifier
                 features = extract_features(landmarks)
 
-                # Static Prediction
                 try:
                     probs = static_clf.predict_proba([features])[0]
-                    max_idx = probs.argmax()
-                    static_conf = probs[max_idx] * 100.0
-                    static_pred = static_clf.classes_[max_idx] if static_conf >= 40.0 else "Uncertain"
                 except Exception:
-                    static_pred = "Uncertain"
-                    static_conf = 0.0
+                    probs = np.zeros(len(classes), dtype=np.float32)
 
-                idx_pt = (landmarks[8].x, landmarks[8].y)
-                pnk_pt = (landmarks[20].x, landmarks[20].y)
+                # Group probabilities
+                ruv_group_prob = 0.0
+                if r_idx is not None and u_idx is not None and v_idx is not None:
+                    ruv_group_prob = probs[r_idx] + probs[u_idx] + probs[v_idx]
 
-                # Dynamic Gestures: Hold Z/J or Smart Pen Tracking
-                if now < dynamic_hold_until and dynamic_hold_label is not None:
-                    predicted_label = dynamic_hold_label
-                    confidence_pct = dynamic_hold_conf
-                else:
-                    is_valid_base = (static_pred in ["D", "I"])
-                    if not is_valid_base:
-                        reset_motion()
-                        predicted_label = static_pred
-                        confidence_pct = static_conf
+                eo_group_prob = 0.0
+                if e_idx is not None and o_idx is not None:
+                    eo_group_prob = probs[e_idx] + probs[o_idx]
+
+                gh_group_prob = 0.0
+                if g_idx is not None and h_idx is not None:
+                    gh_group_prob = probs[g_idx] + probs[h_idx]
+
+                dl_group_prob = 0.0
+                if d_idx is not None and l_idx is not None:
+                    dl_group_prob = probs[d_idx] + probs[l_idx]
+
+                xz_group_prob = 0.0
+                if x_idx is not None and z_idx is not None:
+                    xz_group_prob = probs[x_idx] + probs[z_idx]
+
+                # Check thumb geometry
+                lm4 = landmarks[4]
+                lm5 = landmarks[5]
+                lm9 = landmarks[9]
+                thumb_up = (lm4.y < lm5.y or lm4.y < lm9.y)
+
+                is_index_extended = (idx_ext >= 1.45) and (landmarks[8].y < landmarks[5].y)
+                is_other_fingers_down = (landmarks[8].y < landmarks[12].y - 0.03) and (landmarks[8].y < landmarks[16].y - 0.03) and (landmarks[8].y < landmarks[20].y - 0.03)
+                is_single_index_up = is_index_extended and is_other_fingers_down and (idx_ext > pinky_ext + 0.25)
+
+                if ruv_group_prob >= 0.40 and not (thumb_up and (k_idx is not None and probs[k_idx] > 0.35)):
+                    raw_pred = disambiguate_r_u_v(landmarks)
+                    conf = ruv_group_prob * 100.0
+                elif eo_group_prob >= 0.45:
+                    raw_pred = disambiguate_e_o(landmarks)
+                    conf = eo_group_prob * 100.0
+                elif gh_group_prob >= 0.45 and idx_ext >= 1.55:
+                    raw_pred = disambiguate_g_h(landmarks)
+                    conf = gh_group_prob * 100.0
+                elif is_single_index_up:
+                    raw_pred, geom_val = disambiguate_d_l(landmarks)
+                    if raw_pred == "L":
+                        spread_score = min(1.0, max(0.0, (geom_val - 1.25) / 0.8))
+                        base_p = max(dl_group_prob, probs[l_idx] if l_idx is not None else 0.5)
+                        conf = min(98.5, max(82.0, base_p * 35.0 + spread_score * 30.0 + 40.0))
                     else:
-                        if pen_state == STATE_WAIT_STEADY:
-                            if prev_idx_pt is not None:
-                                move = max(
-                                    math.hypot(idx_pt[0] - prev_idx_pt[0], idx_pt[1] - prev_idx_pt[1]),
-                                    math.hypot(pnk_pt[0] - prev_pnk_pt[0], pnk_pt[1] - prev_pnk_pt[1])
-                                )
-                                if move < MIN_STEP_DIST:
-                                    steady_frames += 1
-                                else:
-                                    steady_frames = 0
-                                if steady_frames >= 3:
-                                    pen_state = STATE_ARMED
-                                    live_index_path = [idx_pt]
-                                    live_pinky_path = [pnk_pt]
-                                    live_poses = [features]
-                            prev_idx_pt = idx_pt
-                            prev_pnk_pt = pnk_pt
-                            predicted_label = static_pred
-                            confidence_pct = static_conf
+                        touch_score = min(1.0, max(0.0, (1.45 - geom_val) / 0.8))
+                        base_p = max(dl_group_prob, probs[d_idx] if d_idx is not None else 0.5)
+                        conf = min(98.5, max(82.0, base_p * 35.0 + touch_score * 30.0 + 40.0))
+                elif not is_single_index_up and (xz_group_prob >= 0.25 or (probs.argmax() in [x_idx, z_idx]) or (x_idx is not None and probs[x_idx] > 0.15) or (z_idx is not None and probs[z_idx] > 0.15)):
+                    raw_pred, geom_val = disambiguate_x_z(landmarks)
+                    if raw_pred == "X":
+                        hook_score = min(1.0, max(0.0, (0.70 - geom_val) / 1.2))
+                        conf = min(98.5, max(75.0, xz_group_prob * 80.0 + hook_score * 18.0))
+                    else:
+                        ext_score = min(1.0, max(0.0, (geom_val - 0.50) / 0.5))
+                        conf = min(98.5, max(75.0, xz_group_prob * 80.0 + ext_score * 18.0))
+                else:
+                    max_idx = probs.argmax()
+                    conf = probs[max_idx] * 100.0
+                    raw_pred = classes[max_idx] if conf >= 30.0 else "Uncertain"
 
-                        elif pen_state == STATE_ARMED:
-                            step = max(
-                                math.hypot(idx_pt[0] - live_index_path[-1][0], idx_pt[1] - live_index_path[-1][1]),
-                                math.hypot(pnk_pt[0] - live_pinky_path[-1][0], pnk_pt[1] - live_pinky_path[-1][1])
-                            )
-                            if step >= MIN_STEP_DIST:
-                                pen_state = STATE_DRAWING
-                                live_index_path.append(idx_pt)
-                                live_pinky_path.append(pnk_pt)
-                                live_poses.append(features)
-                            predicted_label = static_pred
-                            confidence_pct = static_conf
+                # Dynamic 'J' vs Static 'I'
+                is_pinky_extended = (pinky_ext >= 1.45) and (landmarks[20].y < landmarks[18].y) and (pinky_ext > idx_ext + 0.20) and (pinky_ext > mid_ext + 0.20)
+                is_thumb_out = (thumb_idx >= 1.40)
+                is_pure_i_or_j = is_pinky_extended and (not is_thumb_out)
 
-                        elif pen_state == STATE_DRAWING:
-                            step = max(
-                                math.hypot(idx_pt[0] - live_index_path[-1][0], idx_pt[1] - live_index_path[-1][1]),
-                                math.hypot(pnk_pt[0] - live_pinky_path[-1][0], pnk_pt[1] - live_pinky_path[-1][1])
-                            )
-                            if step >= 0.003:
-                                live_index_path.append(idx_pt)
-                                live_pinky_path.append(pnk_pt)
-                                live_poses.append(features)
-                                stroke_pause_frames = 0
-                            else:
-                                stroke_pause_frames += 1
-                                live_index_path.append(idx_pt)
-                                live_pinky_path.append(pnk_pt)
-                                live_poses.append(features)
+                if is_pure_i_or_j or len(pinky_history) > 0:
+                    pinky_history.append((now, landmarks[20].x, landmarks[20].y))
+                    if detect_silent_j_hook(pinky_history):
+                        j_hold_until = now + 1.5
+                        j_cooldown_until = j_hold_until + 0.7
+                        pinky_history.clear()
+                        prediction_buffer.clear()
+                        prediction_buffer.append("J")
+                else:
+                    pinky_history.clear()
 
-                            arc_len = max(path_arc_length(live_index_path), path_arc_length(live_pinky_path))
-                            if dynamic_clf is not None and arc_len >= 0.18 and len(live_index_path) >= 12 and stroke_pause_frames >= 4:
-                                try:
-                                    dyn_vec = build_dynamic_feature_vector(live_index_path, live_pinky_path, live_poses)
-                                    d_probs = dynamic_clf.predict_proba([dyn_vec])[0]
-                                    d_idx = d_probs.argmax()
-                                    d_label = dynamic_clf.classes_[d_idx]
-                                    d_conf = d_probs[d_idx] * 100.0
+                # Dynamic 'Z'
+                is_pointing_or_drawing = (idx_ext >= 1.20) and not is_pure_i_or_j
+                if is_pointing_or_drawing or len(index_history) > 0:
+                    index_history.append((now, landmarks[8].x, landmarks[8].y))
+                    if detect_silent_z_stroke(index_history):
+                        z_hold_until = now + 1.5
+                        z_cooldown_until = z_hold_until + 0.6
+                        index_history.clear()
+                        prediction_buffer.clear()
+                        prediction_buffer.append("Z")
+                else:
+                    index_history.clear()
 
-                                    if d_label in ["J", "Z"] and d_conf >= 40.0:
-                                        dynamic_hold_label = d_label
-                                        dynamic_hold_conf = d_conf
-                                        dynamic_hold_until = now + 2.0
-                                        active_path = live_pinky_path if d_label == "J" else live_index_path
-                                        locked_trail_px = [(int(px * w), int(py * h)) for px, py in active_path]
-                                        prediction_buffer.clear()
-                                        reset_motion()
-                                    else:
-                                        reset_motion()
-                                except Exception:
-                                    reset_motion()
+                if now < z_hold_until:
+                    predicted_label = "Z"
+                    z_prob = (probs[z_idx] + probs[x_idx]) * 100.0 if (z_idx is not None and x_idx is not None) else conf
+                    active_conf = min(98.2, max(85.0, 84.0 + 12.0 * min(idx_ext / 2.0, 1.0) + (z_prob * 0.04)))
+                elif now < z_cooldown_until and (predicted_label == "Z" or raw_pred in ["X", "Uncertain"]):
+                    predicted_label = "Z"
+                    active_conf = 88.0 + 5.0 * min(idx_ext / 2.0, 1.0)
+                elif now < j_hold_until:
+                    predicted_label = "J"
+                    j_conf = (probs[j_idx] + probs[i_idx]) * 100.0 if (j_idx is not None and i_idx is not None) else conf
+                    active_conf = min(98.2, max(85.0, 84.0 + 12.0 * min(pinky_ext / 2.0, 1.0) + (j_conf * 0.04)))
+                elif now < j_cooldown_until and (predicted_label == "J" or raw_pred in ["G", "H", "Uncertain"] or idx_ext < 1.55):
+                    predicted_label = "J"
+                    active_conf = 88.0 + 4.0 * min(pinky_ext / 2.0, 1.0)
+                elif is_pure_i_or_j:
+                    predicted_label = "I"
+                    i_conf = (probs[i_idx] + probs[j_idx]) * 100.0 if (i_idx is not None and j_idx is not None) else conf
+                    active_conf = min(98.5, max(82.0, i_conf * 0.85 + 14.0 * min(pinky_ext / 2.0, 1.0)))
+                else:
+                    predicted_label = raw_pred
+                    active_conf = conf
 
-                            predicted_label = static_pred
-                            confidence_pct = static_conf
+                smooth_conf = smooth_conf * 0.75 + active_conf * 0.25
 
-                # Draw Yellow Active Trail or Purple Locked Trail
-                if now < dynamic_hold_until and locked_trail_px:
-                    for i in range(1, len(locked_trail_px)):
-                        cv2.line(frame, locked_trail_px[i - 1], locked_trail_px[i], (255, 0, 255), 4)
-                elif pen_state == STATE_DRAWING:
-                    trail_pts = [(int(px * w), int(py * h)) for px, py in live_index_path]
-                    for i in range(1, len(trail_pts)):
-                        cv2.line(frame, trail_pts[i - 1], trail_pts[i], (0, 255, 255), 3)
+                if predicted_label not in ["Uncertain", "No Hand"]:
+                    prediction_buffer.append(predicted_label)
+                    stable_prediction = max(set(prediction_buffer), key=prediction_buffer.count)
+                else:
+                    stable_prediction = predicted_label
+                confidence_pct = smooth_conf
 
             else:
-                reset_motion()
-
-            if now < dynamic_hold_until and dynamic_hold_label is not None:
-                stable_prediction = dynamic_hold_label
-                rem_sec = dynamic_hold_until - now
-                pred_display = f"{stable_prediction} (Locked {rem_sec:.1f}s)"
-            else:
-                prediction_buffer.append(predicted_label)
-                stable_prediction = max(set(prediction_buffer), key=prediction_buffer.count) if prediction_buffer else "No Hand"
-                pred_display = stable_prediction
+                prediction_buffer.clear()
+                pinky_history.clear()
+                index_history.clear()
+                stable_prediction = "No Hand"
+                confidence_pct = 0.0
 
             self._latest_prediction = stable_prediction
 
@@ -468,7 +692,7 @@ class NativeInferenceWorker(QThread):
                 # Col 1: Letter
                 cv2.putText(frame, "PREDICTED LETTER", (c1_x, tag_y), cv2.FONT_HERSHEY_SIMPLEX, tag_scale, (140, 150, 165), 1)
                 letter_color = (0, 245, 255) if stable_prediction not in ["No Hand", "Uncertain"] else (130, 135, 145)
-                cv2.putText(frame, str(pred_display), (c1_x, val_y), cv2.FONT_HERSHEY_SIMPLEX, val_scale, letter_color, 2)
+                cv2.putText(frame, str(stable_prediction), (c1_x, val_y), cv2.FONT_HERSHEY_SIMPLEX, val_scale, letter_color, 2)
 
                 # Col 2: Confidence
                 cv2.putText(frame, "CONFIDENCE", (c2_x, tag_y), cv2.FONT_HERSHEY_SIMPLEX, tag_scale, (140, 150, 165), 1)
@@ -519,7 +743,6 @@ class NativeInferenceWorker(QThread):
         with QMutexLocker(self._mutex):
             cand = self._latest_prediction
             if cand and cand not in ["No Hand", "Uncertain"]:
-                # If prediction is like "Z (Locked 1.8s)", extract pure letter
                 letter = cand.split()[0].strip()
                 self._current_sentence += letter
                 self.sentence_changed.emit(self._current_sentence)
