@@ -7,5 +7,10 @@ mediapipe>=0.10.0
 scikit-learn>=1.3.0
 joblib>=1.3.0
 numpy>=1.24.0
-pyvirtualcam>=0.11.0
-pygrabber>=0.2
+
+# Optional Features (Virtual Camera & DirectShow Device Enumeration)
+# Note: On Windows ARM64 (e.g., Snapdragon X Elite), install standard x86_64 Python 3.11/3.12 
+# or omit these optional packages if running native ARM64.
+pyvirtualcam>=0.11.0; platform_machine != "ARM64" and platform_machine != "aarch64"
+pygrabber>=0.2; platform_machine != "ARM64" and platform_machine != "aarch64"
+
