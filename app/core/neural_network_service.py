@@ -113,19 +113,28 @@ class NeuralNetworkService(QObject):
         if not MODELS_DIR.exists():
             return compatible
 
-        for file_path in MODELS_DIR.glob("*.joblib"):
+        # Check both direct directory and subdirectories
+        candidates = list(MODELS_DIR.glob("*.joblib")) + list(MODELS_DIR.glob("*/*.joblib"))
+        seen_paths = set()
+
+        for file_path in candidates:
+            resolved_str = str(file_path.resolve())
+            if resolved_str in seen_paths:
+                continue
+            seen_paths.add(resolved_str)
+
             try:
-                # Inspect without full overhead
                 obj = joblib.load(file_path)
                 from sklearn.neural_network import MLPClassifier
                 if isinstance(obj, MLPClassifier):
                     layer_dims = [obj.n_features_in_] + list(obj.hidden_layer_sizes) + [obj.n_outputs_]
                     arch_str = "-".join(map(str, layer_dims))
-                    display_name = f"{file_path.stem.replace('_', ' ').title()} (MLP {arch_str})"
+                    clean_name = file_path.stem.replace("_", " ").title()
+                    display_name = f"{clean_name} (MLP {arch_str})"
                     compatible.append({
                         "id": file_path.stem,
                         "name": display_name,
-                        "file_path": str(file_path.resolve()),
+                        "file_path": resolved_str,
                         "architecture_str": arch_str,
                         "parameters": sum(w.size + b.size for w, b in zip(obj.coefs_, obj.intercepts_))
                     })
@@ -135,11 +144,25 @@ class NeuralNetworkService(QObject):
         return compatible
 
     def _ensure_default_models(self):
-        """Pure harness: do not seed or generate default models in models/."""
+        """Ensure neural network models are present and automatically loaded."""
         MODELS_DIR.mkdir(parents=True, exist_ok=True)
         available = self.list_compatible_models()
+        if not available:
+            # Check for static_signs.csv to train defaults
+            csv_candidates = [
+                MODELS_DIR / "static_signs.csv",
+                MODELS_DIR / "SignFlow-model-v1-DEV" / "static_signs.csv",
+            ]
+            for c in csv_candidates:
+                if c.exists():
+                    self._train_default_models(c)
+                    available = self.list_compatible_models()
+                    break
+
         if available:
-            self.load_model(available[0]["file_path"])
+            # Prefer Dense model first if present, else first available
+            dense_match = next((m for m in available if "dense" in m["id"].lower()), available[0])
+            self.load_model(dense_match["file_path"])
 
     def _train_default_models(self, dataset_path: Path):
         """Train genuine feedforward neural network models on static_signs.csv."""
@@ -477,21 +500,26 @@ class NeuralNetworkService(QObject):
 
     def load_dataset_sample(self, target_sign: str = "A") -> Optional[Tuple[List[float], str]]:
         """
-        Load an authentic 63-feature coordinate vector from active package static_signs.csv
+        Load an authentic 63-feature coordinate vector from static_signs.csv
         corresponding to the specified sign.
         """
-        csv_path = None
+        csv_candidates = [
+            MODELS_DIR / "static_signs.csv",
+            MODELS_DIR / "SignFlow-model-v1-DEV" / "static_signs.csv",
+            ROOT_DIR / "models" / "static_signs.csv",
+        ]
         try:
             from app.core.model_registry import ModelRegistry
             active_pkg = ModelRegistry.get_instance().get_active_package()
             if active_pkg:
                 cand = Path(active_pkg.folder_path) / "static_signs.csv"
                 if cand.exists():
-                    csv_path = cand
+                    csv_candidates.insert(0, cand)
         except Exception:
             pass
 
-        if not csv_path or not csv_path.exists():
+        csv_path = next((c for c in csv_candidates if c.exists()), None)
+        if not csv_path:
             return None
 
         import csv

@@ -19,13 +19,19 @@ __pycache__/
 
 # Datasets and Training CSV Data
 *.csv
+!models/static_signs.csv
 data/
 datasets/
 
 # AI Model Binaries & Imported Model Packages (Harness is decoupled; loads models via 'Add Model')
 models/*
 !models/.gitkeep
+!models/asl_neural_net_dense.joblib
+!models/asl_neural_net_compact.joblib
+!models/static_signs.csv
 *.joblib
+!models/asl_neural_net_dense.joblib
+!models/asl_neural_net_compact.joblib
 *.task
 *.onnx
 *.pkl

@@ -137,13 +137,9 @@ class NeuralNetworkPage(QWidget):
         ctrl_bar.addWidget(lbl_inp)
 
         self.combo_inputs = QComboBox()
-        self.combo_inputs.addItem("Dataset Sample: Sign B", "dataset_B")
-        self.combo_inputs.addItem("Dataset Sample: Sign A", "dataset_A")
-        self.combo_inputs.addItem("Dataset Sample: Sign C", "dataset_C")
-        self.combo_inputs.addItem("Dataset Sample: Sign D", "dataset_D")
-        self.combo_inputs.addItem("Dataset Sample: Sign E", "dataset_E")
-        self.combo_inputs.addItem("Dataset Sample: Sign F", "dataset_F")
         self.combo_inputs.addItem("Live Camera Hand (MediaPipe)", "camera")
+        for sign in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+            self.combo_inputs.addItem(f"Dataset Sample: Sign {sign}", f"dataset_{sign}")
         ctrl_bar.addWidget(self.combo_inputs)
 
         # Run Forward Pass Button
